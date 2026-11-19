@@ -65,8 +65,15 @@ applies (Lazarus + FPC, and MKL/IPP/OpenBLAS/FFTW where present; see newVM's
 - Console programs built with plain `fpc` (GlassSpine's `spinecheck`,
   HFJV's `hfjvrun`/`hfjvcheck`/`hfjvmesh`) give their command lines in
   their own headers and below.
-- Checked after the split (2026-11-19, P620): all eleven `.lpi`s and the
-  four `fpc` programs build, and `PKPDtest` passes 17/17.
+- Checked after the split (2026-11-19) on the P620, katana and the mac
+  (M4 Max), with newVM at fac8749: all eleven `.lpi`s and the four `fpc`
+  programs build, and `PKPDtest` passes 17/17 everywhere. The mac has no
+  MKL: the FEM4 examples build there on newVM's Accelerate back end for
+  `newVMsparse` (`HAVE_ACCELERATE_SPARSE`, merged from newVM's
+  `accelerate-sparse` branch the same day), and `hfjvcheck` passes in
+  full on it (53 s). GlassSpine runs on macOS's OpenCL (device "Apple M4
+  Max"), and `spinecheck --time=10` matches the P620's output figure for
+  figure.
 - **Updating newVM**: `cd newVM && git pull origin main`, rebuild, then
   commit the new submodule pointer here.
 
