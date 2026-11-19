@@ -42,11 +42,11 @@
         <ResourceBaseClass Value="Form"/>
       </Unit>
       <Unit>
-        <Filename Value="../../Graphs/uVMPlot2D.pas"/>
+        <Filename Value="../../newVM/Graphs/uVMPlot2D.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="../../Graphs/uVMPlot3D.pas"/>
+        <Filename Value="../../newVM/Graphs/uVMPlot3D.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
     </Units>
@@ -58,7 +58,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="../..;../../Graphs"/>
+      <OtherUnitFiles Value="../../newVM;../../newVM/Graphs"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Parsing>

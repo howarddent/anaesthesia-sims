@@ -1,9 +1,9 @@
 {
-  This file is part of newVM.
+  This file is part of anaesthesia-sims.
   Copyright (C) 2026 Howard Dent
   SPDX-License-Identifier: GPL-3.0-or-later
 
-  newVM is free software: you can redistribute it and/or modify it under
+  anaesthesia-sims is free software: you can redistribute it and/or modify it under
   the terms of the GNU General Public License as published by the Free
   Software Foundation, either version 3 of the License, or (at your
   option) any later version. It is distributed WITHOUT ANY WARRANTY; see
@@ -22,7 +22,7 @@ program PKPDtest;
 
 {$mode objfpc}{$H+}
 {$APPTYPE CONSOLE}
-{$I ../../newVMConfig.inc}
+{$I ../../newVM/newVMConfig.inc}
 
 uses
   {$IFDEF UNIX}

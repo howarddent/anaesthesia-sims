@@ -69,7 +69,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="../..;../../LMath/UGenMath;../../LMath/UIntegrals;../../LMath/UNonLinEq"/>
+      <OtherUnitFiles Value="../../newVM;../../newVM/LMath/UGenMath;../../newVM/LMath/UIntegrals;../../newVM/LMath/UNonLinEq"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Parsing>

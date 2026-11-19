@@ -1,9 +1,9 @@
 {
-  This file is part of newVM.
+  This file is part of anaesthesia-sims.
   Copyright (C) 2026 Howard Dent
   SPDX-License-Identifier: GPL-3.0-or-later
 
-  newVM is free software: you can redistribute it and/or modify it under
+  anaesthesia-sims is free software: you can redistribute it and/or modify it under
   the terms of the GNU General Public License as published by the Free
   Software Foundation, either version 3 of the License, or (at your
   option) any later version. It is distributed WITHOUT ANY WARRANTY; see
@@ -22,7 +22,7 @@ program spinecheck;
     - an injection in a given posture: spread, injectate accounted for,
       peak speed, and how fast the GPU runs it.
 
-  Build:  fpc -O2 -Fu../.. -Fi../.. spinecheck.lpr
+  Build:  fpc -O2 -Fu../../newVM -Fi../../newVM spinecheck.lpr
   Run:    ./spinecheck [--time=60] [--tilt=0] [--roll=0] [--dx=1.25]
                        [--level=1] [--iters=30] [--pulse=1] [--cardiac=0.3]
                        [--hr=70] [--resp=0.3] [--rr=12] [--displace=1]

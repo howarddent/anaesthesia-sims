@@ -47,7 +47,7 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="../../newPolymath.pas"/>
+        <Filename Value="../../newVM/newPolymath.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
     </Units>
@@ -59,7 +59,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="../..;../JetVent"/>
+      <OtherUnitFiles Value="../../newVM;../JetVent"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Parsing>

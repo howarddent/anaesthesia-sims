@@ -42,7 +42,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="..\..\..\..\..;..\..\Source\Algebra;..\..\Source\Analytical;..\..\Source\Applications;..\..\Source\Assembly;..\..\Source\Elements;..\..\Source\Expression;..\..\Source\Imposer;..\..\Source\Mesh;..\..\Source\System"/>
+      <OtherUnitFiles Value="..\..\..\newVM;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\Algebra;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\Analytical;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\Applications;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\Assembly;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\Elements;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\Expression;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\Imposer;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\Mesh;..\..\..\newVM\Delphi OOFEM\FEM4\Development\Source\System"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <CodeGeneration>

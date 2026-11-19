@@ -1,5 +1,5 @@
 /*
-  This file is part of newVM.
+  This file is part of anaesthesia-sims.
   Copyright (C) 2026 Howard Dent
   SPDX-License-Identifier: GPL-3.0-or-later
 

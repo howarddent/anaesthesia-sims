@@ -1,0 +1,3 @@
+[submodule "newVM"]
+	path = newVM
+	url = https://github.com/howarddent/newVM.git

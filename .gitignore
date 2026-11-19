@@ -1,0 +1,48 @@
+# Free Pascal / Lazarus build artifacts
+lib/
+*.o
+*.ppu
+*.rsj
+*.compiled
+*.res
+*.lps
+*.exe
+
+# Project binaries are extensionless and named after the project: ignore
+# extensionless names, keep everything with an extension. A directory has
+# no dot either, so real content directories are re-included by name.
+demos/*/[A-Za-z]*
+!demos/*/*.*
+!demos/*/data/
+demos/*/*.dll
+
+Anaesthetics/PK-PD_FPC/PK-PD
+Anaesthetics/PK-PD_FPC/PKPDtest
+
+FEM4/Examples/*/[A-Za-z0-9]*
+!FEM4/Examples/*/*.*
+!FEM4/Examples/HFJV/images/
+# Re-exclude what the negations above let back in
+*.exe
+*.compiled
+*.res
+
+# Delphi/RAD Studio artifacts and IDE-local state
+*.dcu
+*.rsm
+*.dproj.local
+*.identcache
+*.stat
+*.dsk
+*.~dsk
+__history/
+Win64/
+
+# gmsh post-processing output and ThermEx1's time history
+*.pos
+FEM4/Examples/Data/thermex1.csv
+
+.DS_Store
+*.dSYM/
+__pycache__/
+.claude/settings.local.json

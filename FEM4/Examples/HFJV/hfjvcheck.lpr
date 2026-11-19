@@ -31,7 +31,7 @@ program hfjvcheck;
   5. Harmonics against stepping with the adult box abdomen coupled,
      sloshing included.
 
-  Build:  fpc -O2 -Fu../../../../.. -Fi../../../../.. -Fu../../../../../demos/JetVent hfjvcheck.lpr }
+  Build:  fpc -O2 -Fu../../../newVM -Fi../../../newVM -Fu../../../demos/JetVent hfjvcheck.lpr }
 
 {$mode delphi}{$H+}
 

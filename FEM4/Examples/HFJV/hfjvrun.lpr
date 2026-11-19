@@ -68,10 +68,11 @@ program hfjvrun;
            (12, mesh size); or --box for the 300 x 260 x 140 mm box.
 
   Build (from this folder; the FEM4 paths are for the torso's gmsh reader):
-    fpc -O2 -FUlib -Fu../../../../.. -Fi../../../../.. -Fu../../../../../demos/JetVent
-        -Fu../Defibrillation -Fu../ThermEx1 -Fu../../../../../Anaesthetics/PK-PD_FPC
-        -Fu../../../../../Graphs -Fu../../Source/<each of Algebra Analytical
-        Applications Assembly Elements Expression Imposer Mesh System> hfjvrun.lpr }
+    fpc -O2 -FUlib -Fu../../../newVM -Fi../../../newVM -Fu../../../demos/JetVent
+        -Fu../Defibrillation -Fu../ThermEx1 -Fu../../../Anaesthetics/PK-PD_FPC
+        -Fu../../../newVM/Graphs -Fu"../../../newVM/Delphi OOFEM/FEM4/Development/Source/<dir>"
+        (one -Fu for each <dir> of Algebra Analytical Applications Assembly
+        Elements Expression Imposer Mesh System) hfjvrun.lpr }
 
 {$mode delphi}{$H+}
 
