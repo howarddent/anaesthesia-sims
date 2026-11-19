@@ -77,7 +77,7 @@ begin
     Sim.Setup(Opt('dx', 1.25), 1);
     with Sim.Geom do
     begin
-      WriteLn(Format('device %s', [Sim.DeviceName]));
+      WriteLn(Format('device %s, kernels %s', [Sim.DeviceName, Sim.KernelOrigin]));
       WriteLn(Format('grid %d x %d x %d (%.2f mm), %d fluid cells, %.1f mL CSF per sac, sac %.0f mm long',
         [NX, NY, NZ, Dx, System.Length(Fluid), FluidCount[0] * CellVolume / 1000, Length]));
     end;

@@ -140,6 +140,7 @@ type
     Geom: TSpineGeom;
     GeomVersion: Integer;      // goes up each Setup, so a view knows to re-upload
     DeviceName: string;
+    KernelOrigin: string;      // where the kernel source came from: the file, or built in
     Time: Double;              // s since Reset
     Dt: Single;                // s per step
     Nu: Single;                // kinematic viscosity, mm^2/s
@@ -179,6 +180,8 @@ type
     Profile: array[0..1, 0..NLevels - 1] of Double;   // mL per level
     LevelMax: array[0..1, 0..NLevels - 1] of Double;  // peak C per level
     CMin, CMax: Single;                      // over all fluid cells
+    // KernelFile is used if it exists (for editing the kernels without a
+    // rebuild); otherwise the copy built into the program, glassspine_cl.inc.
     constructor Create(const KernelFile: string);
     destructor Destroy; override;
     procedure Setup(ADx, ACurvature: Single);
@@ -223,6 +226,11 @@ const
   PulseBandMM = 10.0;      // depth of the band at T1 where pulsatile CSF enters
 
 implementation
+
+// GlassSpineKernelSource: glassspine.cl as a string constant, made by
+// tools/cl2inc.py - regenerate it after editing glassspine.cl:
+//   python3 ../../tools/cl2inc.py glassspine.cl glassspine_cl.inc GlassSpineKernelSource
+{$I glassspine_cl.inc}
 
 function MatMul(const A, B: TMat3): TMat3;
 var
@@ -313,12 +321,21 @@ begin
   Sz := 0;
   clGetDeviceInfo(FDevice, CL_DEVICE_NAME, SizeOf(Buf) - 1, @Buf[0], @Sz);
   DeviceName := Trim(string(PAnsiChar(@Buf[0])));
-  SL := TStringList.Create;
-  try
-    SL.LoadFromFile(KernelFile);
-    FKernelSrc := SL.Text;
-  finally
-    SL.Free;
+  if (KernelFile <> '') and FileExists(KernelFile) then
+  begin
+    SL := TStringList.Create;
+    try
+      SL.LoadFromFile(KernelFile);
+      FKernelSrc := SL.Text;
+    finally
+      SL.Free;
+    end;
+    KernelOrigin := KernelFile;
+  end
+  else
+  begin
+    FKernelSrc := GlassSpineKernelSource;
+    KernelOrigin := 'built in';
   end;
 end;
 

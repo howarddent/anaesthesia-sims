@@ -46,3 +46,6 @@ FEM4/Examples/Data/thermex1.csv
 *.dSYM/
 __pycache__/
 .claude/settings.local.json
+
+# Release builds (release/build-release.sh)
+release/out/

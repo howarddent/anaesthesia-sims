@@ -208,7 +208,7 @@ begin
       Lines.Add('');
       Lines.Add('11. THIS RUN');
       Lines.Add('');
-      Lines.Add(Format('  device: %s', [Sim.DeviceName]));
+      Lines.Add(Format('  device: %s; kernels: %s', [Sim.DeviceName, Sim.KernelOrigin]));
       Lines.Add(Format('  grid: %d x %d x %d cells of %.2f mm, %d fluid cells a sac, %.1f mL CSF a sac, '
         + 'sac %.0f mm long', [Sim.Geom.NX, Sim.Geom.NY, Sim.Geom.NZ, Sim.Geom.Dx,
         Sim.Geom.FluidCount[0], Sim.Geom.FluidCount[0] * Sim.Geom.CellVolume / 1000, Sim.Geom.Length]));
