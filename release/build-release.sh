@@ -90,7 +90,8 @@ if ! "${LAZBUILD[@]}" --ws=$WS --build-mode=Default -B "$(native "$STAGE/$LPI_RE
   exit 1
 fi
 NAME=$(basename "$LPI_REL" .lpi)
-BIN="$PROJ_DIR/$NAME"; [ -f "$BIN" ] || BIN="$BIN.exe"
+# Test for the .exe first: Git Bash says "foo" exists when only foo.exe does.
+BIN="$PROJ_DIR/$NAME"; [ $OS = windows ] && BIN="$BIN.exe"
 [ -f "$BIN" ] || { echo "built, but $BIN is missing" >&2; exit 1; }
 
 echo "== direct library dependencies"
@@ -112,4 +113,10 @@ fi
 
 mkdir -p "$OUT"
 cp "$BIN" "$OUT/"
+# Drop the debug info (most of the file: ~26 MB to a few). Not on macOS,
+# where signing comes later and strip is best left to that script.
+if [ $OS != macos ] && command -v strip > /dev/null; then
+  strip "$OUT/$(basename "$BIN")"
+fi
+ls -l "$OUT/$(basename "$BIN")" | awk '{print "   " $5 " bytes"}'
 echo "== $OUT/$(basename "$BIN")"
