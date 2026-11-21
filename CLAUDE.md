@@ -103,7 +103,7 @@ Kernels are built in (`tools/cl2inc.py`, see GlassSpine) because FPC 3.2
 can't embed a file portably: `{$R x.rc}` needs MinGW's windres on Linux and
 macOS, and `-FF` (fpcres for .rc) is FPC 3.3 only.
 
-**Windows installer** (2026-11-19, not yet run): `.github/workflows/windows-installers.yml`
+**Windows installer** (2026-11-19; first built 2026-11-21, run 44881354420: a 2.9 MB setup, GlassSpine.exe 3.0 MB stripped, linking only Windows' own DLLs and opengl32; not yet run on a real PC): `.github/workflows/windows-installers.yml`
 runs on a `glassspine-v<version>` tag, or by hand from the Actions tab. On
 `windows-latest` it installs Lazarus (`gcarreno/setup-lazarus`, stable), runs
 `build-release.sh` under Git Bash (which finds `lazbuild` on the PATH, uses
