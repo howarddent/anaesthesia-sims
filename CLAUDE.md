@@ -103,6 +103,21 @@ Kernels are built in (`tools/cl2inc.py`, see GlassSpine) because FPC 3.2
 can't embed a file portably: `{$R x.rc}` needs MinGW's windres on Linux and
 macOS, and `-FF` (fpcres for .rc) is FPC 3.3 only.
 
+**Windows installer** (2026-11-19, not yet run): `.github/workflows/windows-installers.yml`
+runs on a `glassspine-v<version>` tag, or by hand from the Actions tab. On
+`windows-latest` it installs Lazarus (`gcarreno/setup-lazarus`, stable), runs
+`build-release.sh` under Git Bash (which finds `lazbuild` on the PATH, uses
+`python` when there's no `python3`, hands lazbuild `cygpath -m` paths and
+skips the DLL check if there's no `objdump`), then Inno Setup on
+`release/windows/GlassSpine.iss`: a per-user install (no admin rights),
+Start-menu shortcut, optional desktop icon, uninstaller, the GPL as
+`LICENSE.txt`. A tag run attaches `GlassSpine-<version>-windows-x64-setup.exe`
+to the GitHub Release; a manual run keeps it as a workflow artifact. It is
+not code-signed, so SmartScreen warns ("More info", "Run anyway").
+`GlassSpine.lpi` gained `GraphicApplication` (Win32), without which Windows
+opens a console window beside the program; `cl2inc.py --check` ignores CRLF
+in the include, since a Windows checkout may convert it.
+
 ## FEM4 examples
 
 ### `FEM4/Examples/Defibrillation`

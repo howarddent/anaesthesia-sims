@@ -1,0 +1,74 @@
+# Build the GlassSpine Windows installer.
+#
+# Runs on a tag glassspine-v<version> (e.g. glassspine-v1.0), and then
+# attaches the installer to a GitHub Release of that tag, or by hand from
+# the Actions tab ("Run workflow"), which only keeps the installer as a
+# downloadable artifact of the run.
+#
+# The steps are release/build-release.sh under Git Bash (a clean staged copy,
+# newVM's release config, nothing from Intel linked) and Inno Setup on
+# release/windows/GlassSpine.iss. The installer is not code-signed, so
+# Windows SmartScreen warns before running it ("More info", "Run anyway").
+name: Windows installers
+
+on:
+  push:
+    tags: ['glassspine-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  glassspine:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: gcarreno/setup-lazarus@v3
+        with:
+          lazarus-version: stable
+          with-cache: false
+
+      - name: Version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/glassspine-v* ]]; then
+            V="${GITHUB_REF#refs/tags/glassspine-v}"
+          else
+            V="0.0.0-dev.${GITHUB_SHA::7}"
+          fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: Build GlassSpine
+        run: bash release/build-release.sh demos/GlassSpine/GlassSpine.lpi
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=$env:VERSION" release\windows\GlassSpine.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlassSpine-${{ env.VERSION }}-windows-x64
+          path: |
+            release/out/GlassSpine-*-setup.exe
+            release/out/windows-x86_64/GlassSpine.exe
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/glassspine-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SETUP=$(ls release/out/GlassSpine-*-setup.exe)
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --title "GlassSpine $VERSION" \
+              --notes "GlassSpine $VERSION for Windows (64-bit). Download the setup file and run it; Windows may warn that it is from an unknown publisher, since it is not code-signed: choose More info, then Run anyway. Needs a graphics driver with OpenCL."
+          gh release upload "$GITHUB_REF_NAME" "$SETUP" --clobber

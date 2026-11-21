@@ -21,19 +21,25 @@
 #    at run time, so that the program can start without it and say so).
 #
 # The binary lands in release/out/<os>-<cpu>/. Lazarus is found at $LAZDIR
-# (default ~/Lazarus; on the mac it is "~/lazarus 2").
+# (default ~/Lazarus; on the mac it is "~/lazarus 2"), or failing that as
+# lazbuild on the PATH, as on the GitHub Actions Windows runner, where this
+# script runs under Git Bash (.github/workflows/windows-installers.yml).
 set -euo pipefail
 
 WORKTREE=0
 if [ "${1:-}" = --working-tree ]; then WORKTREE=1; shift; fi
-[ $# -eq 1 ] || { sed -n '6,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -eq 1 ] || { sed -n '6,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 LPI_REL=$1
 [ -f "$ROOT/$LPI_REL" ] || { echo "no such project: $LPI_REL" >&2; exit 2; }
 LAZDIR=${LAZDIR:-$HOME/Lazarus}
-[ -x "$LAZDIR/lazbuild" ] || [ -x "$LAZDIR/lazbuild.exe" ] || {
-  echo "lazbuild not found in $LAZDIR (set LAZDIR)" >&2; exit 2; }
+if [ -x "$LAZDIR/lazbuild" ]; then LAZBUILD=("$LAZDIR/lazbuild" --lazarusdir="$LAZDIR")
+elif [ -x "$LAZDIR/lazbuild.exe" ]; then LAZBUILD=("$LAZDIR/lazbuild.exe" --lazarusdir="$LAZDIR")
+elif command -v lazbuild > /dev/null; then LAZBUILD=(lazbuild)
+else echo "lazbuild not found in $LAZDIR or on the PATH (set LAZDIR)" >&2; exit 2
+fi
+PY=python3; command -v python3 > /dev/null || PY=python
 
 case "$(uname -s)" in
   Linux)   OS=linux;   WS=gtk2 ;;
@@ -42,6 +48,8 @@ case "$(uname -s)" in
   *) echo "unsupported platform $(uname -s)" >&2; exit 2 ;;
 esac
 CPU=$(uname -m); [ "$CPU" = arm64 ] && CPU=aarch64
+# Paths handed to the native Windows lazbuild must be Windows paths.
+native() { if [ $OS = windows ]; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
 OUT="$ROOT/release/out/$OS-$CPU"
 
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/anaesthesia-release.XXXXXX")
@@ -67,7 +75,7 @@ for cl in "$PROJ_DIR"/*.cl; do
   inc="${cl%.cl}_cl.inc"
   [ -f "$inc" ] || continue
   const=$(sed -n 's/^  \([A-Za-z0-9_]*\) =$/\1/p' "$inc" | head -1)
-  python3 "$ROOT/tools/cl2inc.py" --check "$cl" "$inc" "$const" || {
+  "$PY" "$ROOT/tools/cl2inc.py" --check "$cl" "$inc" "$const" || {
     echo "   regenerate it: python3 tools/cl2inc.py $(basename "$cl") $(basename "$inc") $const" >&2
     exit 1; }
   echo "   $(basename "$inc") matches $(basename "$cl")"
@@ -77,8 +85,7 @@ echo "== release config"
 cp "$ROOT/release/newVMConfig.release.inc" "$STAGE/newVM/newVMConfig.inc"
 
 echo "== lazbuild ($WS)"
-LAZBUILD="$LAZDIR/lazbuild"; [ -x "$LAZBUILD" ] || LAZBUILD="$LAZDIR/lazbuild.exe"
-if ! "$LAZBUILD" --lazarusdir="$LAZDIR" --ws=$WS --build-mode=Default -B "$STAGE/$LPI_REL" > "$STAGE/lazbuild.log" 2>&1; then
+if ! "${LAZBUILD[@]}" --ws=$WS --build-mode=Default -B "$(native "$STAGE/$LPI_REL")" > "$STAGE/lazbuild.log" 2>&1; then
   grep -iE "error|fatal" "$STAGE/lazbuild.log" | head -20 >&2
   exit 1
 fi
@@ -90,7 +97,11 @@ echo "== direct library dependencies"
 case $OS in
   linux)   DEPS=$(readelf -d "$BIN" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p') ;;
   macos)   DEPS=$(otool -L "$BIN" | tail -n +2 | awk '{print $1}') ;;
-  windows) DEPS=$(objdump -p "$BIN" 2>/dev/null | sed -n 's/.*DLL Name: //p' || true) ;;
+  windows) if command -v objdump > /dev/null; then
+             DEPS=$(objdump -p "$BIN" | sed -n 's/.*DLL Name: //p')
+           else
+             DEPS="(objdump not found: dependency check skipped)"
+           fi ;;
 esac
 echo "$DEPS" | sed 's/^/   /'
 BAD=$(echo "$DEPS" | grep -iE 'mkl|ipp|openblas|fftw|armpl|opencl|clfft' || true)
