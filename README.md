@@ -22,6 +22,8 @@ library.
 | `FEM4/Examples/ThermEx1` | Core temperature of an anaesthetised adult losing heat in a cold theatre. |
 | `FEM4/Examples/Defibrillation` | Current spread from a 200 J defibrillator shock through a torso. |
 | `FEM4/Examples/HFJV` | High-frequency jet ventilation in a supine adult: lumped thorax and FEM abdomen, in the frequency and time domains. |
+| `FEM4/Examples/LeftVentricle` | Finite-element left ventricle with Hill-type fibres and lumped valves: pressure-volume loop, wall motion and twist, with an OpenGL viewer. |
+| `FEM4/Examples/Aorta` | Arterial pulse waves from the aortic valve to the femoral arteries and the left wrist (1-D finite elements, viscoelastic wall), driven by the ventricle model, with an OpenGL viewer. |
 
 `CLAUDE.md` has the detailed notes on each one: models, assumptions,
 verification and results.
