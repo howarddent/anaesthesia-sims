@@ -32,7 +32,9 @@ unit uLVCirc;
      sinotubular junction), then the inertance and characteristic
      impedance of the proximal aorta into a two-element Windkessel. The
      later aorta model replaces everything beyond the root; (p_root,
-     q_ao) is the interface.
+     q_ao) is the interface. With Afterload assigned (lvrun --arteries)
+     that has been done: the valve's flow goes straight into the
+     arterial tree, whose inlet pressure is the root's.
 
   STEPPING   backward Euler. For a given new LV pressure the valves'
   zeta and q are closed-form functions of their pressure differences,
@@ -69,11 +71,18 @@ type
     ZMV, QMV, ZAV, QAV: Double;
   end;
 
+  { pressure at the aortic root, mmHg, for a valve flow, mL/s }
+  TAfterloadFn = function(Q: Double): Double of object;
+
   TLVCirc = class
   private
     FTrial: TCircState;
     FTrialOK: Boolean;
+    FRootFixed: Boolean;   { the root's pressure was solved beforehand (SolveRoot) }
+    FRootP: Double;
     procedure ValveStep(const V: TValve; dp, dt: Double; out Zeta, Q: Double);
+    function RootResidual(PRoot, PLV, dt: Double): Double;
+    function SolveRoot(PLV, dt: Double): Double;
     procedure Residual(const y: array of Double; PLV, t, dt: Double;
       var r: array of Double; out S: TCircState);
   public
@@ -86,6 +95,11 @@ type
     CRoot, LAo, Zc: Double;       { aortic root and proximal aorta }
     CWk, Rp, POut: Double;        { Windkessel }
     LeakZeta: Double;
+    { When assigned, an outside model of the arteries gives the root's
+      pressure for the valve's flow, and replaces CRoot, LAo, Zc and the
+      Windkessel (lvrun --arteries: ../Aorta/uAortaAfterload). QAo is
+      then the valve's flow and PWk the root's pressure. }
+    Afterload: TAfterloadFn;
     { state }
     S: TCircState;
     constructor Create;
@@ -172,9 +186,63 @@ begin
   V := Aortic; V.Zeta := Self.S.ZAV; V.Q := Self.S.QAV;
   ValveStep(V, PLV - S.PRoot, dt, S.ZAV, S.QAV);
   r[0] := S.VLA - Self.S.VLA - dt * ((PPv - pla_) / RPv - S.QMV);
+  if Assigned(Afterload) then
+  begin
+    { the root's pressure is already solved (SolveRoot); Newton has only
+      the atrium left }
+    r[1] := S.PRoot - FRootP;
+    r[2] := S.QAo - S.QAV;
+    r[3] := S.PWk - S.PRoot;
+    Exit;
+  end;
   r[1] := CRoot * (S.PRoot - Self.S.PRoot) - dt * (S.QAV - S.QAo);
   r[2] := LAo * (S.QAo - Self.S.QAo) - dt * (S.PRoot - S.PWk - Zc * S.QAo);
   r[3] := CWk * (S.PWk - Self.S.PWk) - dt * (S.QAo - (S.PWk - POut) / Rp);
+end;
+
+{ With an outside afterload the root's pressure is one equation in one
+  unknown, p - Afterload(q_valve(PLV - p)) = 0, increasing in p. Against
+  a stiff aorta, with the valve's kinked closing law, plain Newton steps
+  cycle; so it is bracketed and solved by bisection with secant steps. }
+function TLVCirc.RootResidual(PRoot, PLV, dt: Double): Double;
+var
+  V: TValve;
+  z, q: Double;
+begin
+  V := Aortic; V.Zeta := S.ZAV; V.Q := S.QAV;
+  ValveStep(V, PLV - PRoot, dt, z, q);
+  Result := PRoot - Afterload(q);
+end;
+
+function TLVCirc.SolveRoot(PLV, dt: Double): Double;
+var
+  a, b, fa, fb, c, fc, w: Double;
+  it: Integer;
+begin
+  a := S.PRoot; fa := RootResidual(a, PLV, dt);
+  if fa = 0 then Exit(a);
+  w := 1;
+  b := a;
+  repeat
+    if fa > 0 then b := a - w else b := a + w;
+    fb := RootResidual(b, PLV, dt);
+    if (fb = 0) then Exit(b);
+    if (fb > 0) <> (fa > 0) then Break;
+    a := b; fa := fb;
+    w := 2 * w;
+    if w > 1e4 then raise Exception.Create('TLVCirc.SolveRoot : no bracket for the root pressure');
+  until False;
+  for it := 1 to 200 do
+  begin
+    if Abs(b - a) < 1e-12 * (1 + Abs(a)) then Break;
+    c := a - fa * (b - a) / (fb - fa);
+    if (it mod 3 = 0) or not ((c > Min(a, b)) and (c < Max(a, b))) then c := 0.5 * (a + b);
+    fc := RootResidual(c, PLV, dt);
+    if fc = 0 then Exit(c);
+    if (fc > 0) = (fa > 0) then begin a := c; fa := fc; end
+    else begin b := c; fb := fc; end;
+  end;
+  if Abs(fa) < Abs(fb) then Result := a else Result := b;
 end;
 
 function TLVCirc.Trial(PLV, t, dt: Double): Double;
@@ -189,6 +257,12 @@ var
 begin
   y[0] := S.VLA; y[1] := S.PRoot; y[2] := S.QAo; y[3] := S.PWk;
   FTrialOK := False;
+  FRootFixed := Assigned(Afterload);
+  if FRootFixed then
+  begin
+    y[1] := SolveRoot(PLV, dt);
+    FRootP := y[1]; y[3] := y[1];
+  end;
   for it := 1 to 60 do
   begin
     Residual(y, PLV, t, dt, r, St);

@@ -12,50 +12,70 @@ unit uCircSimForm;
                      paths, flows.
 
   Both windows are the viewers' own forms, placed inside the tabs with
-  their own compute rows hidden. The two rows above the tabs hold every
-  setting, and "Compute" does both models in turn:
+  their own compute rows hidden. The rows above the tabs hold every
+  setting, and "Compute" does one coupled calculation:
 
-    1  ../LeftVentricle/lvrun runs the ventricle to a steady beat (about
-       four minutes for eight beats) and writes the beat's motion and
-       its pressures and flows into out/lv_<settings>.txt and .csv. A
-       beat already there for the same ventricle settings is reused.
-    2  the arterial tree is run in this program on that beat's aortic
-       valve flow (about eight seconds).
+    1  ../LeftVentricle/lvrun --arteries runs the ventricle ejecting
+       into the arterial tree, coupled both ways at the aortic valve
+       (../Aorta/uAortaAfterload), to a steady beat: about four minutes
+       for eight beats. It writes the beat's motion and its pressures
+       and flows into out/cs_<every setting>.txt and .csv; a beat
+       already there for the same settings is reused.
+    2  the arterial tree is run again in this program on that beat's
+       valve flow, for the pictures (8 to 25 s). With the same arterial
+       settings it reproduces the coupled tree: its root pressure is
+       within about 0.2 mmHg of the one the ventricle worked against,
+       but for one sample at the valve's closure.
 
-  So a change to the arterial settings alone takes seconds. The coupling
-  is one way, as in AortaView: the ventricle ejects into its own
-  Windkessel and does not feel the arterial tree.
+  So the ventricle's stroke volume, pressures and loop are those for
+  the vascular settings, and any change to them needs the whole
+  calculation. Impaired contractility is a lower peak active stress T0;
+  vasodilatation a "vascular resistance x" below 1.
+
+  The peripheral resistance is given directly (mmHg s/mL): with the
+  flow no longer imposed, a mean pressure cannot be. "Stroke volume x"
+  scales the valve's flow on its way into the tree, and the ventricle
+  feels the pressure of the scaled flow: a stand-in for a smaller
+  ventricle, since the ventricle model itself is the adult's.
 
   PRESETS   The "typical of" list fills every arterial setting for a
-  child of 7, an adult of 40 or a person of 80 (Presets below). The two
-  elastance factors were fitted, by running the model on the default
-  beat, until its carotid-femoral and carotid-radial foot-to-foot
-  velocities (uAortaTree: CFPWV, CRPWV) equal the published ones:
+  child of 7, an adult of 40, a person of 80 and a person of 80 with
+  hypertension (Presets below). The elastance factors were fitted with
+  the coupled model (the tree re-run on the coupled beat's flow, then
+  the coupled beat again to confirm) until the carotid-femoral and
+  carotid-radial foot-to-foot velocities (uAortaTree: CFPWV, CRPWV)
+  were the published ones, m/s:
 
-                 carotid-femoral   carotid-radial   m/s
-      child 7         4.8               7.3
-      adult 40        6.9               9.7
-      aged 80        10.9              11.3
+                      carotid-femoral     carotid-radial    root mmHg
+                      published  model    published  model  (coupled)
+      child 7            4.8     4.84        7.3     7.21     96/50
+      adult 40           6.9     6.91        9.7     9.68    120/71
+      aged 80           10.9    10.87       11.3    11.29    139/59
       aged 80, grade II/III hypertension
-                     14.0              (none: the model gives 12.8)
+                        14.0    13.95        none   13.25    162/76
 
   Carotid-femoral at 40 and 80: Reference Values for Arterial Stiffness'
   Collaboration, Eur Heart J 2010;31:2338, normal values (30-39 6.5,
   40-49 7.2; 70 and over 10.9). The child's, and all three carotid-
   radial: Zocalo & Bia, J Cardiovasc Dev Dis 2021;8:3, 50th centiles
   (5 y 4.6 and 7.0, 10 y 5.0 and 7.7; 40 y 9.7; 80 y 11.3). The body
-  size, stroke volume, mean pressure and bed compliance beside them are
-  my round typical values, not from those papers; the wall viscosity is
-  left at 5 ms for all three. The fit holds for the default ventricle
-  (70 /min); another heart rate moves the velocities a little.
+  size, stroke volume factor and bed compliance beside them are my
+  round typical values, not from those papers. The resistances put the
+  coupled mean pressure near my round 72, 98 and 118 mmHg (73, 98, 117);
+  the adult's is the ventricle model's own. The wall viscosity is left
+  at 5 ms for all. The child's velocities are not refitted closer: at
+  that size the foot-to-foot figure jumps by about 0.1 m/s between
+  neighbouring factors. The fit holds for the normal ventricle at
+  70 /min; the velocities move with the pressure, so with T0, the heart
+  rate and the vascular resistance.
 
   The hypertensive preset: 14.0 m/s is the same Collaboration's mean
   for 70 and over with grade II/III hypertension (+-2 SD 7.4-20.6). Only
-  the aortic factor is fitted. The iliac and arm factor, 2.3, is the
-  smallest round value that lets the carotid-femoral velocity reach 14
-  inside the aortic control's range (the iliacs are on that path), and
-  the carotid-radial velocity is what follows, with no published target.
-  Mean pressure 120 mmHg is my round value for that grade.
+  the aortic factor is fitted. The iliac and arm factor, 2.6, is a round
+  value that lets the carotid-femoral velocity reach 14 inside the
+  aortic control's range (the iliacs are on that path; at 2.3 the aortic
+  factor would have to be 10), and the carotid-radial velocity is what
+  follows, with no published target.
 
   Only the visible tab's animation runs. }
 
@@ -73,11 +93,12 @@ type
   TCircSimForm = class(TForm)
   private
     FDir, FLVDir: string;
-    pnlTop, pnlRow1, pnlRow2, pnlRow3: TPanel;
+    pnlTop, pnlRows, pnlCO, pnlRow1, pnlRow2, pnlRow3: TPanel;
+    lblCO: TLabel;
     FPages: TPageControl;
     tsLV, tsAorta: TTabSheet;
     seHR, seLVBeats, seAoBeats: TSpinEdit;
-    seT0, seStiff, seOther, seCPer, seTau, seSize, seFlow, seMeanP, sePVR: TFloatSpinEdit;
+    seT0, seStiff, seOther, seCPer, seTau, seSize, seFlow, seRTot, sePVR: TFloatSpinEdit;
     cbPreset: TComboBox;
     FPresetting: Boolean;
     edExtra: TEdit;
@@ -98,6 +119,7 @@ type
     procedure ArterialEdited(Sender: TObject);
     procedure SetRunning(R: Boolean);
     function FileTag: string;
+    procedure ShowOutput(const CsvFile: string);
     // the ventricle's beat is in AnimFile and CsvFile: show it, run the arteries
     procedure ShowBeat(const AnimFile, CsvFile, Note: string);
   public
@@ -110,7 +132,7 @@ type
     procedure Start;
     procedure Compute;
     { before Start; 0 leaves a setting alone }
-    procedure SetVentricle(HR, Beats: Integer);
+    procedure SetVentricle(HR, Beats: Integer; T0: Double = 0);
     function Computing: Boolean;
     procedure ShowTab(Index: Integer);
     { 0 child of 7, 1 adult of 40, 2 aged 80, 3 aged 80 with hypertension }
@@ -124,15 +146,15 @@ implementation
 type
   TPreset = record
     Name: string;
-    Size, Flow, MeanP, Stiff, Other, CPer, Tau: Double;
+    Size, Flow, RTot, Stiff, Other, CPer, Tau: Double;
   end;
 const
   { Stiff and Other fitted to the velocities in the header; the rest assumed }
   Presets: array[0..3] of TPreset = (
-    (Name: 'child, 7 years'; Size: 0.70; Flow: 0.55; MeanP: 72; Stiff: 0.31; Other: 0.39; CPer: 0.4; Tau: 5),
-    (Name: 'adult, 40 years'; Size: 1; Flow: 1; MeanP: 0; Stiff: 0.91; Other: 1.07; CPer: 0.8; Tau: 5),
-    (Name: 'elderly, 80 years'; Size: 1; Flow: 0.9; MeanP: 98; Stiff: 3.77; Other: 1.76; CPer: 0.6; Tau: 5),
-    (Name: 'elderly, 80 years, hypertensive'; Size: 1; Flow: 0.9; MeanP: 120; Stiff: 7.6; Other: 2.3; CPer: 0.6; Tau: 5));
+    (Name: 'child, 7 years'; Size: 0.70; Flow: 0.55; RTot: 1.46; Stiff: 0.31; Other: 0.39; CPer: 0.4; Tau: 5),
+    (Name: 'adult, 40 years'; Size: 1; Flow: 1; RTot: 1.147; Stiff: 0.90; Other: 1.05; CPer: 0.8; Tau: 5),
+    (Name: 'elderly, 80 years'; Size: 1; Flow: 0.9; RTot: 1.37; Stiff: 3.92; Other: 1.78; CPer: 0.6; Tau: 5),
+    (Name: 'elderly, 80 years, hypertensive'; Size: 1; Flow: 0.9; RTot: 1.82; Stiff: 7.9; Other: 2.6; CPer: 0.6; Tau: 5));
 
 function DotFS: TFormatSettings;
 begin
@@ -145,7 +167,7 @@ constructor TCircSimForm.CreateNew(AOwner: TComponent; Num: Integer);
   function Row(AAlign: TAlign): TPanel;
   begin
     Result := TPanel.Create(Self);
-    Result.Parent := pnlTop;
+    Result.Parent := pnlRows;
     Result.Align := AAlign;
     Result.Height := 36;
     Result.BevelOuter := bvNone;
@@ -172,6 +194,26 @@ begin
   pnlTop.Align := alTop;
   pnlTop.Height := 108;
   pnlTop.BevelOuter := bvNone;
+  { the cardiac output, on the right of the settings }
+  pnlCO := TPanel.Create(Self);
+  pnlCO.Parent := pnlTop;
+  pnlCO.Align := alRight;
+  pnlCO.Width := 190;
+  pnlCO.BevelOuter := bvNone;
+  lblCO := TLabel.Create(Self);
+  lblCO.Parent := pnlCO;
+  lblCO.Align := alClient;
+  lblCO.Alignment := taCenter;
+  lblCO.Layout := tlCenter;
+  lblCO.Font.Style := [fsBold];
+  lblCO.Font.Size := 14;
+  lblCO.Hint := 'Mean flow through the aortic valve over the beat shown, times "stroke volume x": '
+    + 'what enters the arteries';
+  lblCO.ShowHint := True;
+  pnlRows := TPanel.Create(Self);
+  pnlRows.Parent := pnlTop;
+  pnlRows.Align := alClient;
+  pnlRows.BevelOuter := bvNone;
   pnlRow3 := Row(alBottom);
   pnlRow1 := Row(alTop);
   pnlRow2 := Row(alClient);
@@ -217,15 +259,14 @@ begin
   seFlow := FloatSpin(pnlRow2, 0.2, 1.5, 0.05, 1, 2, 65);
   seFlow.Hint := 'Multiplies the ventricle''s valve flow before it enters the arteries';
   seFlow.ShowHint := True;
-  AddLabel(pnlRow2, 'mean pressure, mmHg');
-  seMeanP := FloatSpin(pnlRow2, 0, 160, 1, 0, 0, 60);
-  seMeanP.Hint := 'Sets the peripheral resistance to give this mean pressure. 0: the ventricle model''s own resistance';
-  seMeanP.ShowHint := True;
+  AddLabel(pnlRow2, 'peripheral resistance, mmHg s/mL');
+  seRTot := FloatSpin(pnlRow2, 0.3, 4, 0.01, 1.147, 3, 75);
+  seRTot.Hint := 'Total resistance of the arterial beds, typical of the age. Mean pressure is this times the cardiac output';
+  seRTot.ShowHint := True;
   AddLabel(pnlRow2, 'vascular resistance x');
   sePVR := FloatSpin(pnlRow2, 0.3, 3, 0.05, 1, 2, 65);
   sePVR.Hint := 'Multiplies the peripheral resistance of every arterial bed. Above 1: vasoconstriction; below 1: '
-    + 'vasodilatation. The ventricle''s flow is imposed, so the mean pressure rises and falls in proportion. '
-    + 'Not changed by the "typical of" list';
+    + 'vasodilatation. The ventricle ejects against the result. Not changed by the "typical of" list';
   sePVR.ShowHint := True;
 
   AddLabel(pnlRow3, '', True);
@@ -243,7 +284,7 @@ begin
   seTau.ShowHint := True;
   AddLabel(pnlRow3, 'beats to run');
   seAoBeats := IntSpin(pnlRow3, 2, 80, 1, 25, 55);
-  seSize.OnChange := ArterialEdited; seFlow.OnChange := ArterialEdited; seMeanP.OnChange := ArterialEdited;
+  seSize.OnChange := ArterialEdited; seFlow.OnChange := ArterialEdited; seRTot.OnChange := ArterialEdited;
   seStiff.OnChange := ArterialEdited; seOther.OnChange := ArterialEdited;
   seCPer.OnChange := ArterialEdited; seTau.OnChange := ArterialEdited;
   SetPreset(1);
@@ -336,7 +377,7 @@ begin
     cbPreset.ItemIndex := Index;
     with Presets[Index] do
     begin
-      seSize.Value := Size; seFlow.Value := Flow; seMeanP.Value := MeanP;
+      seSize.Value := Size; seFlow.Value := Flow; seRTot.Value := RTot;
       seStiff.Value := Stiff; seOther.Value := Other; seCPer.Value := CPer; seTau.Value := Tau;
     end;
   finally
@@ -374,14 +415,14 @@ begin
   a := FDir + 'out' + PathDelim + FileTag + '.txt';
   c := ChangeFileExt(a, '.csv');
   if FileExists(a) and FileExists(c) then
-    ShowBeat(a, c, 'computed earlier: ' + FileTag)
+    ShowBeat(a, c, 'computed earlier')
   else
   begin
     // LVView's own default beat, which has these settings
     a := FLVDir + 'out' + PathDelim + 'anim_default.txt';
     c := FLVDir + 'out' + PathDelim + 'beat.csv';
     if FileExists(a) and FileExists(c) then
-      ShowBeat(a, c, 'beat from LeftVentricle/out')
+      ShowBeat(a, c, 'NOT COUPLED: LeftVentricle''s default beat, ejecting into its own Windkessel. Press Compute')
     else
       lblRun.Caption := 'Nothing computed yet: press Compute (about four minutes)';
   end;
@@ -393,7 +434,10 @@ var
   i: Integer;
 begin
   Extra := Trim(edExtra.Text);
-  Result := Format('lv_hr%d_t0%.0f_b%d', [seHR.Value, seT0.Value, seLVBeats.Value], DotFS);
+  { the beat depends on the arteries too }
+  Result := Format('cs_hr%d_t0%.0f_b%d_a%.2f_%.2f_r%.3f_x%.2f_z%.2f_f%.2f_c%.2f_w%.1f',
+    [seHR.Value, seT0.Value, seLVBeats.Value, seStiff.Value, seOther.Value, seRTot.Value, sePVR.Value,
+     seSize.Value, seFlow.Value, seCPer.Value, seTau.Value], DotFS);
   for i := 1 to Length(Extra) do
     if Extra[i] in ['0'..'9', 'a'..'z', 'A'..'Z', '.', ','] then
       Result := Result + Extra[i]
@@ -422,7 +466,8 @@ begin
     AoForm.LVFile := CsvFile;
     AoForm.BodySize := seSize.Value;
     AoForm.FlowScale := seFlow.Value;
-    AoForm.MeanP := seMeanP.Value;
+    AoForm.MeanP := 0;
+    AoForm.RTotal := seRTot.Value;
     AoForm.Resistance := sePVR.Value;
     AoForm.SetModel(seStiff.Value, seOther.Value, seCPer.Value, seAoBeats.Value, seTau.Value);
     AoForm.Compute;
@@ -430,7 +475,38 @@ begin
     btnCompute.Enabled := True;
   end;
   lblRun.Caption := Note;
+  ShowOutput(CsvFile);
   PageChange(nil);
+end;
+
+{ the beat's csv: time in column 1, aortic valve flow, mL/s, in column 7 }
+procedure TCircSimForm.ShowOutput(const CsvFile: string);
+var
+  L: TStringList;
+  Parts: TStringArray;
+  i, n: Integer;
+  t, q, t0, tPrev, qPrev, Vol: Double;
+begin
+  lblCO.Caption := '';
+  L := TStringList.Create;
+  try
+    L.LoadFromFile(CsvFile);
+    n := 0; Vol := 0; t0 := 0; tPrev := 0; qPrev := 0;
+    for i := 1 to L.Count - 1 do
+    begin
+      Parts := L[i].Split([',']);
+      if Length(Parts) < 7 then Continue;
+      if not (TryStrToFloat(Parts[0], t, DotFS) and TryStrToFloat(Parts[6], q, DotFS)) then Continue;
+      if n = 0 then t0 := t else Vol := Vol + 0.5 * (q + qPrev) * (t - tPrev);
+      tPrev := t; qPrev := q;
+      Inc(n);
+    end;
+    if (n > 1) and (tPrev > t0) then
+      lblCO.Caption := 'Cardiac output'#10
+        + FormatFloat('0.00', Vol / (tPrev - t0) * 0.06 * seFlow.Value, DotFS) + ' L/min';
+  finally
+    L.Free;
+  end;
 end;
 
 procedure TCircSimForm.ComputeClick(Sender: TObject);
@@ -444,7 +520,7 @@ begin
   FCsvFile := ChangeFileExt(FAnimFile, '.csv');
   if FileExists(FAnimFile) and FileExists(FCsvFile) then
   begin
-    ShowBeat(FAnimFile, FCsvFile, 'ventricle reused: ' + FileTag);
+    ShowBeat(FAnimFile, FCsvFile, 'computed earlier');
     Exit;
   end;
   Exe := FLVDir + 'lvrun';
@@ -466,6 +542,15 @@ begin
   FProc.Parameters.Add('--hr=' + IntToStr(seHR.Value));
   FProc.Parameters.Add('--beats=' + IntToStr(seLVBeats.Value));
   FProc.Parameters.Add('--t0=' + FormatFloat('0', seT0.Value, DotFS));
+  FProc.Parameters.Add('--arteries');
+  FProc.Parameters.Add('--stiff=' + FormatFloat('0.###', seStiff.Value, DotFS));
+  FProc.Parameters.Add('--stiffother=' + FormatFloat('0.###', seOther.Value, DotFS));
+  FProc.Parameters.Add('--rtot=' + FormatFloat('0.####', seRTot.Value, DotFS));
+  FProc.Parameters.Add('--pvr=' + FormatFloat('0.###', sePVR.Value, DotFS));
+  FProc.Parameters.Add('--size=' + FormatFloat('0.###', seSize.Value, DotFS));
+  FProc.Parameters.Add('--flow=' + FormatFloat('0.###', seFlow.Value, DotFS));
+  FProc.Parameters.Add('--cperiph=' + FormatFloat('0.###', seCPer.Value, DotFS));
+  FProc.Parameters.Add('--walltau=' + FormatFloat('0.###', seTau.Value, DotFS));
   Parts := Trim(edExtra.Text).Split([' '], TStringSplitOptions.ExcludeEmpty);
   for i := 0 to High(Parts) do FProc.Parameters.Add(Parts[i]);
   FProc.Options := [poUsePipes, poStderrToOutPut, poNoConsole];
@@ -481,6 +566,7 @@ begin
   end;
   pbRun.Max := seLVBeats.Value;
   lblRun.Caption := 'ventricle: filling...';
+  lblCO.Caption := '';
   SetRunning(True);
 end;
 
@@ -489,8 +575,9 @@ begin
   sePVR.Value := X;
 end;
 
-procedure TCircSimForm.SetVentricle(HR, Beats: Integer);
+procedure TCircSimForm.SetVentricle(HR, Beats: Integer; T0: Double);
 begin
+  if T0 > 0 then seT0.Value := T0;
   if HR > 0 then seHR.Value := HR;
   if Beats > 0 then seLVBeats.Value := Beats;
 end;
@@ -531,16 +618,17 @@ begin
       Inc(beats);
       q := PosEx(#10, FProcOut, q + 1);
     end;
+    if beats > 0 then beats := beats div 2;   { two lines a beat: the ventricle's, the arteries' }
     beats := EnsureRange(beats, 0, pbRun.Max);
     pbRun.Position := beats;
     if beats < pbRun.Max then
-      lblRun.Caption := Format('ventricle: beat %d of %d', [beats + 1, pbRun.Max]);
+      lblRun.Caption := Format('ventricle and arteries: beat %d of %d', [beats + 1, pbRun.Max]);
   end;
   if not FProc.Running then
   begin
     SetRunning(False);
     if (FProc.ExitStatus = 0) and FileExists(FAnimFile) and FileExists(FCsvFile) then
-      ShowBeat(FAnimFile, FCsvFile, 'computed: ' + FileTag)
+      ShowBeat(FAnimFile, FCsvFile, 'computed')
     else
     begin
       lblRun.Caption := 'lvrun failed';

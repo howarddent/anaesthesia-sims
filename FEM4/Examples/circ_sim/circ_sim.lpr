@@ -4,10 +4,10 @@ program circ_sim;
   drives, in one window: the ventricle's wall motion and loop on one
   tab, the aortic pulse on another, and one Compute for both. The window
   is uCircSimForm; the models and viewers are LeftVentricle's and
-  Aorta's own units, and the ventricle is computed by
-  ../LeftVentricle/lvrun, which must be built.
+  Aorta's own units, and the ventricle ejecting into the arterial tree
+  is computed by ../LeftVentricle/lvrun --arteries, which must be built.
 
-    circ_sim [--compute] [--hr=<n>] [--lvbeats=<n>] [--tab=<0|1>]
+    circ_sim [--compute] [--hr=<n>] [--lvbeats=<n>] [--t0=<kPa>] [--tab=<0|1>]
              [--preset=<0..3>] [--pvr=<x>] [--snapshot=<prefix>]
 
     --compute            press Compute at the start
@@ -15,6 +15,7 @@ program circ_sim;
                          a person of 80 with hypertension
     --pvr=<x>            peripheral resistance x: vasoconstriction above 1, dilatation below [1]
     --hr, --lvbeats      the heart rate and the ventricle's beats to run
+    --t0=<kPa>           peak active fibre stress: contractility [145]
     --tab=<0|1>          open on the ventricle (0) or the aortic pulse (1)
     --snapshot=<prefix>  wait for the computation, save both tabs'
                          pictures as <prefix>_lv_*.png, <prefix>_aorta_*.png
@@ -36,7 +37,7 @@ var
   Form: TCircSimForm;
   Snapshot, Arg: string;
   i, k, Tab, HR, LVBeats, Preset: Integer;
-  PVR: Double;
+  PVR, T0: Double;
   DoCompute: Boolean;
   Bmp: TBitmap;
 
@@ -55,7 +56,7 @@ end;
 begin
   InitializeCBLAS;
   DefaultFormatSettings.DecimalSeparator := '.';
-  Snapshot := ''; Tab := 0; DoCompute := False; HR := 0; LVBeats := 0; Preset := -1; PVR := 1;
+  Snapshot := ''; Tab := 0; DoCompute := False; HR := 0; LVBeats := 0; Preset := -1; PVR := 1; T0 := 0;
   for i := 1 to ParamCount do
   begin
     Arg := ParamStr(i);
@@ -64,17 +65,18 @@ begin
     else if Copy(Arg, 1, 5) = '--hr=' then HR := StrToInt(Copy(Arg, 6, MaxInt))
     else if Copy(Arg, 1, 10) = '--lvbeats=' then LVBeats := StrToInt(Copy(Arg, 11, MaxInt))
     else if Copy(Arg, 1, 9) = '--preset=' then Preset := StrToInt(Copy(Arg, 10, MaxInt))
+    else if Copy(Arg, 1, 5) = '--t0=' then T0 := StrToFloat(Copy(Arg, 6, MaxInt))
     else if Copy(Arg, 1, 6) = '--pvr=' then PVR := StrToFloat(Copy(Arg, 7, MaxInt))
     else if Arg = '--compute' then DoCompute := True
     else
     begin
-      WriteLn('Usage: circ_sim [--compute] [--hr=<n>] [--lvbeats=<n>] [--tab=<0|1>] [--preset=<0..3>] [--pvr=<x>] [--snapshot=<prefix>]');
+      WriteLn('Usage: circ_sim [--compute] [--hr=<n>] [--lvbeats=<n>] [--t0=<kPa>] [--tab=<0|1>] [--preset=<0..3>] [--pvr=<x>] [--snapshot=<prefix>]');
       Halt(1);
     end;
   end;
   Application.Initialize;
   Form := TCircSimForm.CreateNew(Application);
-  Form.SetVentricle(HR, LVBeats);
+  Form.SetVentricle(HR, LVBeats, T0);
   if Preset >= 0 then Form.SetPreset(Preset);
   Form.SetResistance(PVR);
   Form.Show;

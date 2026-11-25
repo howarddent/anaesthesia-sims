@@ -31,13 +31,40 @@ program lvrun;
       circuit    --ppv (mmHg)  --rp (mmHg s/mL)  --cwk (mL/mmHg)
       solver     --tol  --mtype  --mkl  --nopredictor  --verbose
 
-  Build:  fpc -O3 -FUlib -Fu../../../newVM -Fi../../../newVM lvrun.lpr }
+  --arteries       eject into the arterial tree (../Aorta) in place of
+                   the Windkessel, coupled both ways at the valve: see
+                   ../Aorta/uAortaAfterload. Its options:
+      --stiff --stiffother   elastance x of the aorta and carotid, of the rest [1, 1]
+      --rtot=<R>       total peripheral resistance, mmHg s/mL [1.147]
+      --pvr=<x>        multiplies it: vasoconstriction above 1, dilatation below [1]
+      --size=<x>       body size: every arterial length and radius x [1]
+      --flow=<x>       valve flow x on its way into the tree [1]
+      --cperiph=<C>    compliance of the beds, mL/mmHg [0.8]
+      --walltau=<ms>   wall retardation time [5]
+      --settle=<n>     tree-only beats between ventricle beats [6; 25 after the first]
+
+  Build:  fpc -O3 -FUlib -Fu../../../newVM -Fi../../../newVM -Fu../Aorta lvrun.lpr }
 
 {$mode delphi}{$H+}
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, StrUtils, Math, cblas, newVM, newVMsparse, uLVMech, uLVCirc, uLVHeart;
+  SysUtils, StrUtils, Math, cblas, newVM, newVMsparse, uAortaAfterload,
+  uLVMech, uLVCirc, uLVHeart;
+
+type
+  { hands each accepted ventricle step on to the arterial tree }
+  TCoupling = class
+    Heart: TLVHeart;
+    Art: TAortaAfterload;
+    procedure Step(dt: Double);
+  end;
+
+procedure TCoupling.Step(dt: Double);
+begin
+  Art.Advance(dt, Heart.Circ.S.QAV);
+end;
+
 
 function Opt(const Name: string; Def: Double): Double;
 var
@@ -80,6 +107,10 @@ var
   parts: TStringArray;
   f: TextFile;
   tick: QWord;
+  Cpl: TCoupling;
+  Art: TAortaAfterload;
+  nSettle: Integer;
+  svPrev: Double;
 begin
   InitializeCBLAS;
   FormatSettings.DecimalSeparator := '.';
@@ -168,6 +199,29 @@ begin
   end;
   dt := Opt('dt', 0.002);
   nBeats := Round(Opt('beats', 8));
+  Art := nil; Cpl := nil; svPrev := 0;
+  nSettle := Round(Opt('settle', 6));
+  if Flag('arteries') then
+  begin
+    Art := TAortaAfterload.Create;
+    Art.Sim.AorticStiff := Opt('stiff', 1);
+    Art.Sim.OtherStiff := Opt('stiffother', 1);
+    Art.Sim.RTotal := Opt('rtot', Art.Sim.RTotal);
+    Art.Sim.RFactor := Opt('pvr', 1);
+    Art.Sim.Size := Opt('size', 1);
+    Art.Sim.CPeriph := Opt('cperiph', Art.Sim.CPeriph);
+    Art.Sim.WallTau := Opt('walltau', Art.Sim.WallTau);
+    Art.Scale := Opt('flow', 1);
+    Art.Extrapolate := not Flag('noextrap');
+    Art.WallViscous := not Flag('noviscroot');
+    Art.Start(H.Circ.Period);
+    Cpl := TCoupling.Create;
+    Cpl.Heart := H; Cpl.Art := Art;
+    H.Circ.Afterload := Art.RootPressure;
+    H.OnStep := Cpl.Step;
+    Writeln(Format('Ejecting into the arterial tree: peripheral resistance %.3f mmHg s/mL, valve flow x %.2f',
+      [Art.RUsed, Art.Scale]));
+  end;
   { start at end diastole: filled passively, the atrium at the same pressure }
   H.InflateToVolume(Opt('edv', 125), 12);
   H.Circ.S.VLA := H.Circ.LAV0 + H.Model.Pcav / mmHg / H.Circ.LAElastance(0);
@@ -180,11 +234,20 @@ begin
       H.FrameEvery := Max(1, Round(Opt('animevery', 2)));
     tick := GetTickCount64;
     H.Steps := 0; H.NewtonIts := 0;
+    if Art <> nil then Art.BeginBeat;
     H.RunBeat(dt, S);
     B := H.Summarise(S);
     Writeln(Format(' %3d  %6.1f %6.1f %6.1f %5.1f %5.2f %5.1f %6.1f  %5.1f/%5.1f %6.1f %6.1f   %5.2f  %5.1f',
       [beat, B.EDV, B.ESV, B.SV, 100 * B.EF, B.CO, B.EDP, B.PeakLV, B.AoSys, B.AoDia, B.AoMean,
        B.PLAMean, H.NewtonIts / H.Steps, (GetTickCount64 - tick) / 1000]));
+    if Art <> nil then
+    begin
+      Writeln(Format('      arteries: root %.1f -> %.1f mmHg over the beat, stroke volume changed by %.2f mL; '
+        + 'reflected waves late by at most %.2f mmHg', [S[0].PRoot, S[High(S)].PRoot, B.SV - svPrev, Art.LagError]));
+      svPrev := B.SV;
+      if beat < nBeats then
+        if beat = 1 then Art.Settle(Max(25, nSettle)) else Art.Settle(nSettle);
+    end;
     Flush(Output);  { LVView counts these lines for its progress bar }
     if Flag('profile') then
       Writeln(Format('      %d steps; assembly %.1f s, sparse build %.1f s, PARDISO %.1f s (cumulative)',

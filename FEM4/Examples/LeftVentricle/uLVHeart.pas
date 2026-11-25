@@ -51,6 +51,9 @@ type
     FrameEvery: Integer;
     FrameSample: array of Integer;
     FrameU, FrameL, FrameT: array of array of Single;
+    { called after every accepted step (dt may be a fraction of
+      RunBeat's): an outside afterload advances itself here }
+    OnStep: procedure(dt: Double) of object;
     constructor Create(const G: TLVGeom; const M: TLVMaterial);
     destructor Destroy; override;
     { passive filling to a cavity pressure (mmHg) or volume (mL) }
@@ -187,6 +190,7 @@ begin
   begin
     Model.Accept;
     Circ.Commit(Model.Pcav / mmHg, t0 + dt, dt);
+    if Assigned(OnStep) then OnStep(dt);
     Inc(Steps); Inc(NewtonIts, Model.Iterations);
   end
   else if Depth < 5 then

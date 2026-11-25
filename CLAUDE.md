@@ -1074,6 +1074,23 @@ units). The unit headers have the equations and the vessel table.
   carotid-radial 9.28 (root was 125/70 with the carotid lumped).
   aortacheck passes.
 
+- **Forward and backward parts on the wave plot** (2026-11-25): the
+  pressure-against-distance plot also draws, for the groin's path, the
+  pressure's forward (blue) and backward, reflected (red) running parts.
+  `TAortaSim.Run` sums dPf, dPb = (dp +- rho c du)/2 at every output
+  sample of the last beat from the beat's start (`TPath.Pf`, `Pb`, each
+  plus the node's pressure at the start, so P = Pf + Pb - that;
+  `WMin`/`WMax` hold the plot's range). Linear and elastic-wall, so
+  approximate in the upstroke, and the parts step at junctions, where
+  the flow and wave speed step. What it shows (T0 65, resistance x0.6):
+  the backward part is broad (17.5 mmHg at the root against 28.5
+  forward), starts at each place ~25 ms after the forward front passes
+  (reflection all along the taper and branches; the beds are matched),
+  so it has no front returning from the periphery; the second wave seen
+  starting at the root after valve closure is the dicrotic wave, a
+  forward wave. circ_sim shows the cardiac output (valve flow's mean x
+  "stroke volume x") in bold at the right of its settings.
+
 ### `FEM4/Examples/circ_sim`
 
 Added 2026-11-24 at the user's request: LeftVentricle and Aorta in one
@@ -1089,15 +1106,63 @@ Compute for both.
 - **Settings** are two rows above the tabs: the ventricle's (heart rate,
   beats, T0, other lvrun options) and the arteries' (aortic elastance,
   iliacs and arm, bed compliance, wall viscosity, beats).
-- **Compute** runs `../LeftVentricle/lvrun --anim --csv` through
-  `TProcess` into `out/lv_<settings>.txt` and `.csv` (progress by beat,
-  about 4 min for 8 beats), loads the motion into the ventricle tab, then
-  runs `TAortaSim` in-process on that csv (8 s). A beat already in `out/`
-  for the same ventricle settings is reused, so changing only arterial
-  settings takes seconds. A failed lvrun's files are deleted.
-- **Still one-way**: the ventricle ejects into its own Windkessel, and
-  the arteries take its valve flow. The arterial settings do not change
-  the ventricle's beat.
+- **Compute is one coupled calculation** (2026-11-25; the one-way
+  version before it ran lvrun into its Windkessel and then the tree on
+  its flow). It runs `../LeftVentricle/lvrun --arteries` with every
+  arterial setting through `TProcess` into `out/cs_<all settings>.txt`
+  and `.csv` (two output lines a beat; about 4 min for 8 beats), loads
+  the motion, then runs `TAortaSim` in-process on that csv for the
+  pictures. That replay reproduces the coupled tree (root pressure
+  within ~0.2 mmHg, bar one sample at valve closure). A beat already in
+  `out/` for the same settings is reused; any change needs the whole
+  run.
+- **The coupling** (`Aorta/uAortaAfterload.pas`, `TAortaAfterload`;
+  hooks `TLVCirc.Afterload` and `TLVHeart.OnStep`; lvrun now builds with
+  `-Fu../Aorta`):
+  - The valve's flow goes into the tree's inlet junction, whose pressure
+    replaces CRoot, LAo, Zc and the Windkessel.
+  - Inside a ventricle step `RootPressure(Q)` solves the tree's own inlet
+    equations with the arriving characteristic frozen (extrapolated one
+    step) plus the wall's viscous pressure at node 0, so the aorta's
+    local impedance is implicit and reflected waves lag one 2 ms step.
+  - After each accepted step `Advance` takes the tree over it in its
+    explicit steps with the inflow ramped.
+  - **Settling**: a ventricle beat costs ~27 s, a tree beat 0.4-1 s, and
+    the beds need ~20 beats. So between ventricle beats `Settle` runs the
+    tree alone on the last beat's flow (25 beats after the first, then 6;
+    `--settle`). The converged beat is a periodic coupled solution; the
+    beats before it are not a physical transient. Converges in 4-5 beats
+    (stroke volume change < 0.05 mL); at T0 65 it oscillates and is still
+    changing by 0.3 mL at beat 8.
+  - **`TLVCirc.SolveRoot`**: with an afterload the root pressure is one
+    monotone equation; it is bracketed and solved by bisection with
+    secant steps before Trial's Newton. Plain Newton failed in beat 1
+    against the stiff elderly aorta ("circulation step did not
+    converge").
+  - FPC's `Format` has no `%+`: it shifted the arguments silently.
+  - `lvcheck` passes unchanged; lvrun without `--arteries` is as before.
+- **Settings changed for it**: "mean pressure" became "peripheral
+  resistance, mmHg s/mL" (`seRTot`; a mean pressure cannot be imposed
+  when the flow is an outcome). "Stroke volume x" scales the valve flow
+  into the tree and the ventricle feels the scaled flow's pressure - a
+  stand-in for a smaller ventricle. `--t0=<kPa>` on the command line.
+- **What it does not have**: no venous return or right heart (pulmonary
+  venous pressure fixed at 9.9 mmHg, so preload hardly changes), no
+  baroreflex (heart rate and T0 are inputs), coronary flow does not feed
+  back on contractility.
+- **Results** (adult preset, 70 /min; SV mL, EF %, CO L/min, root mmHg,
+  LV EDP):
+  - T0 145, PVR x1: 70.6, 58, 4.94, 120/71, 9.2
+  - T0 145, x0.6: 77.7, 64, 5.44, 96/35, 8.8
+  - T0 65, x1: 50.9, 41, 3.56, 84/51, 10.6
+  - T0 65, x0.6: 62.2, 51, 4.35, 71/29, 9.9
+- **Presets refitted coupled** (R, aortic x, other x -> cf, cr m/s; root;
+  SV at the valve): child 1.46, 0.31, 0.39 -> 4.84, 7.21; 96/50; 76.4.
+  Adult 1.147, 0.90, 1.05 -> 6.91, 9.68; 120/71; 70.6. Aged 80 1.37,
+  3.92, 1.78 -> 10.87, 11.29; 139/59; 67.4. Hypertensive 1.82, 7.9, 2.6
+  -> 13.95, 13.25; 162/76; 60.8. The coupled ventricle ejects less into
+  a stiff aorta, so the elderly pulse pressures are no longer double.
+  The one-way figures in the bullets below are superseded.
 - **Start**: each tab is shown once first (a tab's GL controls have no
   context until then). With nothing in `out/` for the default settings
   it shows `../LeftVentricle/out/anim_default.txt` and `beat.csv`, which

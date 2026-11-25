@@ -117,6 +117,10 @@ type
     Name: string;
     Nodes: array of TPathNode;
     P: array of array of Single;   { [frame][node], mmHg }
+    { the pressure's forward and backward running parts, each added to
+      the node's pressure at the start of the beat: P = Pf + Pb - that }
+    Pf, Pb: array of array of Single;
+    SepP, SepU, SepP0, SepF, SepB: array of Double;   { the running separation, cgs }
   end;
 
   TAortaSim = class
@@ -146,6 +150,7 @@ type
     FrameEvery: Integer;        { output samples per frame }
     FrameP, FrameR: array of array of Single;
     PMin, PMax: Double;         { over all frames and nodes }
+    WMin, WMax: Double;         { the same over the paths, their Pf and Pb included }
     { of the last beat }
     Steps: Integer;
     PeriodicErr: Double;        { largest change of a probe's pressure over the beat, mmHg }
@@ -373,7 +378,7 @@ var
   procedure Sample(idx: Integer);
   var
     a, b, fi: Integer;
-    pv: Double;
+    pv, pn, un, rc: Double;
   begin
     TOut[idx] := idx * LV.Period / nOut;
     for a := 0 to High(Probes) do
@@ -381,10 +386,37 @@ var
       Probes[a].P[idx] := Probes[a].V.PressureAt(Probes[a].S) / mmHg;
       Probes[a].Q[idx] := Probes[a].V.FlowAt(Probes[a].S);
     end;
-    if (idx mod every = 0) and (idx div every < NFrames) then
-      for a := 0 to 1 do
-        for b := 0 to High(Paths[a].Nodes) do
-          Paths[a].P[idx div every][b] := Paths[a].Nodes[b].V.Pressure(Paths[a].Nodes[b].Node) / mmHg;
+    { the waves apart, by the linear rule dPf, dPb = (dp +- rho c du)/2
+      summed from the start of the beat at every output sample. It takes
+      the wall as elastic and the wave as small: approximate in a steep
+      upstroke }
+    for a := 0 to 1 do
+      with Paths[a] do
+        for b := 0 to High(Nodes) do
+        begin
+          pn := Nodes[b].V.Pressure(Nodes[b].Node);
+          un := Nodes[b].V.Q[Nodes[b].Node] / Nodes[b].V.A[Nodes[b].Node];
+          if idx = 0 then
+          begin
+            SepP0[b] := pn; SepF[b] := 0; SepB[b] := 0;
+          end
+          else
+          begin
+            rc := Rho * Nodes[b].V.Speed(Nodes[b].Node);
+            SepF[b] := SepF[b] + 0.5 * ((pn - SepP[b]) + rc * (un - SepU[b]));
+            SepB[b] := SepB[b] + 0.5 * ((pn - SepP[b]) - rc * (un - SepU[b]));
+          end;
+          SepP[b] := pn; SepU[b] := un;
+          if (idx mod every = 0) and (idx div every < NFrames) then
+          begin
+            fi := idx div every;
+            P[fi][b] := pn / mmHg;
+            Pf[fi][b] := (SepP0[b] + SepF[b]) / mmHg;
+            Pb[fi][b] := (SepP0[b] + SepB[b]) / mmHg;
+            WMin := Min(WMin, Min(P[fi][b], Min(Pf[fi][b], Pb[fi][b])));
+            WMax := Max(WMax, Max(P[fi][b], Max(Pf[fi][b], Pb[fi][b])));
+          end;
+        end;
     if (idx mod every = 0) and (idx div every < NFrames) then
     begin
       fi := idx div every;
@@ -411,8 +443,14 @@ begin
   end;
   for i := 0 to 1 do
   begin
-    SetLength(Paths[i].P, NFrames);
-    for k := 0 to NFrames - 1 do SetLength(Paths[i].P[k], Length(Paths[i].Nodes));
+    n := Length(Paths[i].Nodes);
+    SetLength(Paths[i].P, NFrames); SetLength(Paths[i].Pf, NFrames); SetLength(Paths[i].Pb, NFrames);
+    for k := 0 to NFrames - 1 do
+    begin
+      SetLength(Paths[i].P[k], n); SetLength(Paths[i].Pf[k], n); SetLength(Paths[i].Pb[k], n);
+    end;
+    SetLength(Paths[i].SepP, n); SetLength(Paths[i].SepU, n); SetLength(Paths[i].SepP0, n);
+    SetLength(Paths[i].SepF, n); SetLength(Paths[i].SepB, n);
   end;
   SetLength(LeakMean, Length(Tree.J));
   FrameEvery := every;
@@ -426,6 +464,7 @@ begin
     SetLength(FrameR[k], VOff[Length(Tree.Vessels)]);
   end;
   PMin := Infinity; PMax := -Infinity;
+  WMin := Infinity; WMax := -Infinity;
   for beat := 1 to Beats do
   begin
     Last := beat = Beats;

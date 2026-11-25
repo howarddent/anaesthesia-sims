@@ -86,6 +86,7 @@ type
       model's resistance); Resistance multiplies the peripheral resistance
       (vasoconstriction above 1, vasodilatation below) }
     BodySize, FlowScale, MeanP, Resistance: Double;
+    RTotal: Double;   { total peripheral resistance, mmHg s/mL, used when MeanP = 0 }
     constructor CreateNew(AOwner: TComponent; Num: Integer = 0); override;
     destructor Destroy; override;
     procedure SetModel(AStiff, AOther, ACPer: Double; ABeats: Integer; AWallTau: Double = 5);
@@ -255,7 +256,7 @@ begin
   FPlay.Enabled := False;
 
   FSim := TAortaSim.Create;
-  BodySize := 1; FlowScale := 1; MeanP := 0; Resistance := 1;
+  BodySize := 1; FlowScale := 1; MeanP := 0; Resistance := 1; RTotal := 1.147;
   for i := 0 to 3 do FSite[i] := -1;
   RightResized(nil);
 end;
@@ -356,6 +357,7 @@ begin
     FSim.LV.Scale := FlowScale;
     FSim.MeanP := MeanP;
     FSim.RFactor := Resistance;
+    FSim.RTotal := RTotal;
     FSim.Beats := seBeats.Value;
     tick := GetTickCount64;
     try
@@ -434,6 +436,9 @@ begin
   FWavePlot.SetSeriesStyle(0, SiteCol[2], 2.5, plsSolid, '');
   FWavePlot.SetSeriesStyle(1, SiteCol[3], 2.5, plsSolid, '');
   FWavePlot.SetSeriesStyle(2, clWhite, 0, plsNone, '');
+  // the groin's pressure apart: its forward and backward running parts
+  FWavePlot.SetSeriesStyle(3, RGBToColor(30, 90, 200), 1.5, plsSolid, 'to the groin: forward part');
+  FWavePlot.SetSeriesStyle(4, RGBToColor(215, 60, 40), 1.5, plsSolid, 'to the groin: backward (reflected) part');
   // the wrist's path whole; the groin's every fourth node, point by
   // point (each PlotXY refits the bounds, so few of them)
   n := Length(FSim.Paths[0].Nodes);
@@ -445,10 +450,13 @@ begin
   while k < n do
   begin
     FWavePlot.PlotXY(FX[1][0, k], FSim.Paths[1].P[j][k], 1);
+    FWavePlot.PlotXY(FX[1][0, k], FSim.Paths[1].Pf[j][k], 3);
+    FWavePlot.PlotXY(FX[1][0, k], FSim.Paths[1].Pb[j][k], 4);
     if (k < n - 1) and (k + 4 > n - 1) then k := n - 1 else Inc(k, 4);
   end;
-  FWavePlot.PlotXY(0, FSim.PMin, 2);
-  FWavePlot.PlotXY(0, FSim.PMax, 2);
+  FWavePlot.PlotXY(0, FSim.WMin, 2);
+  // room above the curves for the legend
+  FWavePlot.PlotXY(0, FSim.WMax + 0.5 * (FSim.WMax - FSim.WMin), 2);
 
   k := j * FSim.FrameEvery;
   FFlowPlot.ClearSeries;
