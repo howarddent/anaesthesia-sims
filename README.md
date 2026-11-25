@@ -24,6 +24,7 @@ library.
 | `FEM4/Examples/HFJV` | High-frequency jet ventilation in a supine adult: lumped thorax and FEM abdomen, in the frequency and time domains. |
 | `FEM4/Examples/LeftVentricle` | Finite-element left ventricle with Hill-type fibres and lumped valves: pressure-volume loop, wall motion and twist, with an OpenGL viewer. |
 | `FEM4/Examples/Aorta` | Arterial pulse waves from the aortic valve to the femoral arteries and the left wrist (1-D finite elements, viscoelastic wall), driven by the ventricle model, with an OpenGL viewer. |
+| `FEM4/Examples/circ_sim` | The ventricle and the arterial pulse together: wall motion and pressure-volume loop on one tab, the aortic pulse on another, computed in one step. |
 
 `CLAUDE.md` has the detailed notes on each one: models, assumptions,
 verification and results.

@@ -36,6 +36,7 @@ in newVM's `CLAUDE.md`.
 | `FEM4/Examples/HFJV/` | High-frequency jet ventilation in a supine adult; reuses Defibrillation's torso. `images/` holds result plots |
 | `FEM4/Examples/LeftVentricle/` | Finite-element left ventricle (Hill fibres, lumped valves and circulation) with the LVView viewer; needs newVM's `TPardisoFactor.Refactor` (d02cff7 or later) |
 | `FEM4/Examples/Aorta/` | 1-D finite-element pulse waves from the aortic valve to the femorals and the left wrist, with the AortaView viewer; reads LeftVentricle's `out/beat.csv` |
+| `FEM4/Examples/circ_sim/` | LeftVentricle and Aorta in one window, on two tabs, with one Compute; uses both projects' units and `../LeftVentricle/lvrun` |
 | `FEM4/Examples/Data/` | ThermEx1's gmsh inputs (`thermex1.geo/.msh/.scr`); ThermEx1 and ThermSlab find it as `../Data/` |
 
 Cross-project dependencies inside this repo: JetFlow and HFJV use
@@ -1059,6 +1060,98 @@ units). The unit headers have the equations and the vessel table.
     `A`; a parameter `N` and a local `n` collide.
 - Left out: the right arm and head vessels as
   vessels, gravity, two-way coupling with the ventricle.
+
+- **Carotid, body size, carotid-femoral velocity** (2026-11-24, for
+  circ_sim's age presets). The left common carotid is now a vessel
+  (20.8 cm, radius 0.37, counted with the aorta for the elastance
+  factor) ending in the head's bed. It was a lumped bed at the arch.
+  `TAortaSim.CFPWV`/`CRPWV` are the carotid-femoral and carotid-radial
+  velocities as a clinic measures them: path-length difference from the
+  arch over the delay between the feet, carotid site at 0.8 of the
+  vessel. `Size` scales every length and radius, `LV.Scale` the valve
+  flow, and `MeanP` > 0 sets the resistance (`aortarun --size --flow
+  --meanp`). At the defaults: root 124/71, carotid-femoral 6.96 m/s,
+  carotid-radial 9.28 (root was 125/70 with the carotid lumped).
+  aortacheck passes.
+
+### `FEM4/Examples/circ_sim`
+
+Added 2026-11-24 at the user's request: LeftVentricle and Aorta in one
+window, `circ_sim.lpi` (`lazbuild --ws=gtk2`; `uCircSimForm.pas`,
+`circ_sim.lpr`). Two tabs, "Left ventricle" and "Aortic pulse", and one
+Compute for both.
+
+- **The tabs are the viewers' own forms**, `TLVViewForm` and
+  `TAortaViewForm`, parented into the tab sheets (`Embed`: no border,
+  their compute rows hidden, LVView's Open button hidden). The project's
+  unit path reaches `..\LeftVentricle` and `..\Aorta`; nothing is
+  copied. LVView and AortaView still build and work alone.
+- **Settings** are two rows above the tabs: the ventricle's (heart rate,
+  beats, T0, other lvrun options) and the arteries' (aortic elastance,
+  iliacs and arm, bed compliance, wall viscosity, beats).
+- **Compute** runs `../LeftVentricle/lvrun --anim --csv` through
+  `TProcess` into `out/lv_<settings>.txt` and `.csv` (progress by beat,
+  about 4 min for 8 beats), loads the motion into the ventricle tab, then
+  runs `TAortaSim` in-process on that csv (8 s). A beat already in `out/`
+  for the same ventricle settings is reused, so changing only arterial
+  settings takes seconds. A failed lvrun's files are deleted.
+- **Still one-way**: the ventricle ejects into its own Windkessel, and
+  the arteries take its valve flow. The arterial settings do not change
+  the ventricle's beat.
+- **Start**: each tab is shown once first (a tab's GL controls have no
+  context until then). With nothing in `out/` for the default settings
+  it shows `../LeftVentricle/out/anim_default.txt` and `beat.csv`, which
+  have those settings.
+- Only the visible tab animates (`SetActive` on both forms). The two
+  tabs' playback positions are independent.
+- **Elderly hypertensive preset** (2026-11-25, `--preset=3`): flow 0.9, mean 120 mmHg
+  (assumed), aortic x 7.6 fitted to carotid-femoral 14.0 m/s, the Collaboration's
+  mean for 70+ with grade II/III hypertension. Iliacs and arm x 2.3 is chosen, not
+  fitted: with it at the normotensive 1.76 the cf velocity saturates near 13.8
+  however stiff the aorta (the iliacs are on the path), and scaling both factors
+  together gives cr 14.4. Result: cf 14.02, cr 12.82 (no published target), root
+  189/71, brachial 212/69 - pulse pressure far too wide, as in the other elderly
+  preset.
+- **Vascular resistance x** (2026-11-25, `sePVR`, 0.3..3, `--pvr=<x>`; `aortarun --pvr`):
+  `TAortaSim.RFactor` multiplies the total peripheral resistance (RTotal, or the one
+  set by MeanP), so every Windkessel bed's resistance in proportion. Each bed keeps
+  its matched entry resistance and its compliance. It mimics vasoconstriction (>1)
+  and vasodilatation (<1). It is not part of the age presets and they don't reset
+  it. The inflow is imposed, so mean pressure follows it in proportion and the
+  stroke volume does not fall. Adult preset, root / brachial / cf velocity:
+  x0.6 88/32, 104/31, 6.57 m/s; x1 122/72, 137/69, 6.91; x1.5 167/121, 181/119,
+  7.36 (the velocity moves because the wall stiffens with pressure).
+- **Age presets** (same day, the "typical of" list; `--preset=<0..2>`):
+  child of 7, adult of 40 (the start-up choice), aged 80. A preset fills
+  every arterial setting; editing one switches the list to "(my own
+  values)". The arterial settings now take three rows, with three new
+  ones: body size x, stroke volume x, mean pressure.
+  - **Targets**, foot-to-foot, m/s, carotid-femoral / carotid-radial:
+    4.8 / 7.3, 6.9 / 9.7, 10.9 / 11.3. Carotid-femoral at 40 and 80 is
+    from the Reference Values for Arterial Stiffness' Collaboration (Eur
+    Heart J 2010;31:2338; normal values 30-39 6.5, 40-49 7.2, 70+ 10.9).
+    The child's, and all carotid-radial, are Zocalo & Bia's 50th
+    centiles (J Cardiovasc Dev Dis 2021;8:3; 5 y 4.6 and 7.0, 10 y 5.0
+    and 7.7). Zocalo's own carotid-femoral at 40 and 80 is higher, 7.7
+    and 11.3. The tables were read from Europe PMC's full-text XML
+    (`.../europepmc/webservices/rest/PMC2948201/fullTextXML`,
+    `PMC7827252`); PMC itself blocks fetches.
+  - **Fitted**: the two elastance factors, by running `aortarun` on the
+    default beat and scaling each by (target/model)^2 until both
+    velocities matched: 0.31 / 0.39, 0.91 / 1.07, 3.77 / 1.76. The model
+    gives 4.82 / 7.31, 6.91 / 9.70, 10.88 / 11.31.
+  - **Assumed** (round typical values, mine): body size 0.70 for the
+    child; stroke volume x 0.55 and 0.9 (child, 80); mean pressure 72
+    and 98; bed compliance 0.4, 0.8, 0.6; wall viscosity 5 ms for all.
+  - **Pressures that result**, root and brachial: child 92/51 and
+    101/50; adult 122/72 and 137/69; aged 80 152/57 and 175/54. The
+    last pulse pressure is about twice a typical one: the aorta is
+    stiffened but not widened, and the ventricle's flow is the adult's
+    (one-way coupling).
+  - The fit is for 70 /min. The ventricle is the adult's in all three.
+- `--compute`, `--hr=<n>`, `--lvbeats=<n>`, `--tab=<0|1>`,
+  `--snapshot=<prefix>` (both tabs' pictures and the window per tab).
+  Checked with `--compute --hr=80 --lvbeats=2` (78 s) and by snapshot.
 
 ## demos/
 

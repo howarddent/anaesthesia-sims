@@ -119,7 +119,7 @@ end;
 
 procedure TAortaView.ResetView;
 begin
-  FCX := 6.5; FCY := -21; FHalf := 33;
+  FCX := 6.5; FCY := -19.5; FHalf := 34.5;
   Invalidate;
 end;
 
@@ -188,6 +188,7 @@ begin
   Course('left subclavian', [2.5, 4.5, 3.4, 6.2, 5, 7]);
   Course('left brachial', [5, 7, 12.5, 7.6, 14.6, 5, 17, -24]);
   Course('left radial', [17, -24, 19.5, -47]);
+  Course('left common carotid', [0, 5.6, -0.4, 8.5, -0.6, 11.5]);
 end;
 
 procedure TAortaView.CoursePoint(v: Integer; s: Double; out P, N: TPt);
@@ -365,7 +366,7 @@ const
   Stubs: array[0..14] of TStub = (
     (J: 0; DX: -2.8; DY: 0.7; Lab: 'coronaries'; Align: -1; LX: 0; LY: 0),
     (J: 1; DX: -2.4; DY: 3.0; Lab: 'brachiocephalic'; Align: -1; LX: 0; LY: 0),
-    (J: 2; DX: -0.3; DY: 4.2; Lab: 'L common carotid'; Align: -1; LX: 0; LY: 0.6),
+    (J: 17; DX: 0; DY: 1.6; Lab: 'head'; Align: 0; LX: 0; LY: 0.5),
     (J: 14; DX: 0.6; DY: 3.0; Lab: 'L vertebral'; Align: 1; LX: 0; LY: 0.4),
     (J: 4; DX: 3.0; DY: 0.2; Lab: 'intercostals'; Align: 1; LX: 0; LY: 0),
     (J: 5; DX: -3.0; DY: -0.4; Lab: 'coeliac'; Align: -1; LX: 0; LY: 0),
@@ -378,7 +379,8 @@ const
     (J: 13; DX: -0.6; DY: -2.4; Lab: 'R common femoral'; Align: 0; LX: -0.6; LY: -1.3),
     (J: 15; DX: -1.8; DY: -4.5; Lab: 'ulnar'; Align: 0; LX: 0; LY: -1.3),
     (J: 16; DX: 0.3; DY: -2.4; Lab: 'hand'; Align: 0; LX: 0; LY: -1.3));
-  Names: array[0..7] of TName = (
+  Names: array[0..8] of TName = (
+    (S: 'L common carotid'; X: -1.3; Y: 10.6; Align: -1),
     (S: 'ascending aorta'; X: -3.2; Y: 2.6; Align: -1),
     (S: 'arch'; X: 0.9; Y: 7.4; Align: 1),
     (S: 'thoracic aorta'; X: 4.2; Y: -6; Align: 1),

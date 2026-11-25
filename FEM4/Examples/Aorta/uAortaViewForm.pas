@@ -50,6 +50,7 @@ type
     FClock0: QWord;
     FTime0: Double;
     FUpdating: Boolean;
+    FInactive: Boolean;
     FComputeMs: Integer;
     // the plots' fixed data
     FT: TVMobj;
@@ -80,10 +81,21 @@ type
     function FrameTime(j: Integer): Double;
   public
     LVFile: string;
+    { the body, for circ_sim's presets (uAortaTree): lengths and radii x,
+      the ventricle's flow x, and the mean pressure (0: the ventricle
+      model's resistance); Resistance multiplies the peripheral resistance
+      (vasoconstriction above 1, vasodilatation below) }
+    BodySize, FlowScale, MeanP, Resistance: Double;
     constructor CreateNew(AOwner: TComponent; Num: Integer = 0); override;
     destructor Destroy; override;
     procedure SetModel(AStiff, AOther, ACPer: Double; ABeats: Integer; AWallTau: Double = 5);
     procedure Compute;
+    { for circ_sim: sits inside AParent with no frame, the row that
+      computes hidden (the host computes) }
+    procedure Embed(AParent: TWinControl);
+    { the animation runs only while Active (the host's visible tab) }
+    procedure SetActive(Active: Boolean);
+    function StatusText: string;
     procedure ShowFrameAt(j: Integer);
     function FrameAtTime(t: Double): Integer;
     function SaveSnapshot(const Prefix: string): Boolean;
@@ -243,6 +255,7 @@ begin
   FPlay.Enabled := False;
 
   FSim := TAortaSim.Create;
+  BodySize := 1; FlowScale := 1; MeanP := 0; Resistance := 1;
   for i := 0 to 3 do FSite[i] := -1;
   RightResized(nil);
 end;
@@ -339,6 +352,10 @@ begin
     FSim.OtherStiff := seOther.Value;
     FSim.CPeriph := seCPer.Value;
     FSim.WallTau := seTau.Value;
+    FSim.Size := BodySize;
+    FSim.LV.Scale := FlowScale;
+    FSim.MeanP := MeanP;
+    FSim.RFactor := Resistance;
     FSim.Beats := seBeats.Value;
     tick := GetTickCount64;
     try
@@ -391,7 +408,7 @@ begin
   FBar.Invalidate;
   ShowFrame(0);
   Restart(0);
-  FPlay.Enabled := btnPlay.Caption = 'Pause';
+  FPlay.Enabled := (btnPlay.Caption = 'Pause') and not FInactive;
 end;
 
 procedure TAortaViewForm.UpdatePlots(j: Integer);
@@ -459,12 +476,12 @@ begin
   UpdatePlots(j);
   FInfo.Invalidate;
   ir := FSite[2]; ifm := FSite[3];
-  FStatus.SimpleText := Format('%s   |   %.0f /min, stroke volume %.1f mL   |   aortic elastance x %.2f, '
-    + 'bed compliance %.2f mL/mmHg, wall %.0f ms   |   foot of the wave: wrist %.0f ms (%.1f m/s), groin %.0f ms (%.1f m/s)   |   '
+  FStatus.SimpleText := Format('%s   |   %.0f /min, stroke volume %.1f mL   |   '
+    + 'foot to foot from the valve: wrist %.0f ms, groin %.0f ms   |   carotid-femoral %.1f m/s, carotid-radial %.1f m/s   |   '
     + '%d beats in %.1f s',
-    [ExtractFileName(LVFile), 60 / FSim.LV.Period, FSim.LV.StrokeVolume, FSim.AorticStiff, FSim.CPeriph, FSim.WallTau,
-     1000 * (FSim.Probes[ir].TFoot - FSim.Probes[0].TFoot), FSim.Probes[ir].PWV / 100,
-     1000 * (FSim.Probes[ifm].TFoot - FSim.Probes[0].TFoot), FSim.Probes[ifm].PWV / 100,
+    [ExtractFileName(LVFile), 60 / FSim.LV.Period, FSim.LV.StrokeVolume,
+     1000 * (FSim.Probes[ir].TFoot - FSim.Probes[0].TFoot),
+     1000 * (FSim.Probes[ifm].TFoot - FSim.Probes[0].TFoot), FSim.CFPWV / 100, FSim.CRPWV / 100,
      FSim.Beats, FComputeMs / 1000]);
 end;
 
@@ -563,6 +580,34 @@ begin
   t := t - FSim.LV.Period * Floor(t / FSim.LV.Period);
   j := FrameAtTime(t);
   if j <> FView.Frame then ShowFrame(j);
+end;
+
+procedure TAortaViewForm.Embed(AParent: TWinControl);
+begin
+  Position := poDesigned;
+  BorderStyle := bsNone;
+  Parent := AParent;
+  Align := alClient;
+  pnlRow2.Visible := False;
+  pnlTop.Height := 36;
+  Visible := True;
+end;
+
+procedure TAortaViewForm.SetActive(Active: Boolean);
+begin
+  FInactive := not Active;
+  if Active and (btnPlay.Caption = 'Pause') and (FSim.NFrames > 0) then
+  begin
+    Restart(FView.Frame);
+    FPlay.Enabled := True;
+  end
+  else
+    FPlay.Enabled := False;
+end;
+
+function TAortaViewForm.StatusText: string;
+begin
+  Result := FStatus.SimpleText;
 end;
 
 procedure TAortaViewForm.PlayClick(Sender: TObject);

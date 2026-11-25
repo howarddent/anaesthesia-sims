@@ -21,17 +21,18 @@ unit uAortaTree;
       left subclavian                3.4   0.42 -> 0.40   to the vertebral
       left axillary and brachial    42.2   0.40 -> 0.24
       left radial                   23.5   0.174 -> 0.142
+      left common carotid           20.8   0.37 -> 0.37    to the head
 
   These follow the arterial tree of Stergiopulos, Young & Rogge 1992
   (J Biomech 25:1477) as used by Alastruey et al.; they are typical
   values set down from memory of those tables, not one subject's
   measurements. Wave speeds come from the diameters (uArtery1D.WaveSpeed).
 
-  OTHER BRANCHES are lumped beds at the junction where they leave: coronaries, brachiocephalic, left common
-  carotid, left vertebral, intercostals (lumped at mid-thorax), coeliac,
+  OTHER BRANCHES are lumped beds at the junction where they leave:
+  coronaries, brachiocephalic, left vertebral, intercostals (lumped at mid-thorax), coeliac,
   superior mesenteric, both renals, inferior mesenteric, internal iliacs
-  and the ulnar (with the interosseous). The common femoral arteries and
-  the radial at the wrist end in beds too. Each bed's resistance is the
+  and the ulnar (with the interosseous). The common femoral arteries, the
+  radial at the wrist and the left common carotid end in beds too. Each bed's resistance is the
   total peripheral resistance divided by its share of the cardiac output
   (typical resting values, my estimates).
 
@@ -49,6 +50,32 @@ unit uAortaTree;
   in the nine aortic vessels; OtherStiff does the same for the iliacs
   and the arm. The wave speed goes as the square root.
 
+  The carotid counts with the aorta for AorticStiff: both are elastic
+  arteries that stiffen with age.
+
+  CAROTID-FEMORAL AND CAROTID-RADIAL VELOCITY   CFPWV and CRPWV are what
+  a clinic measures: the feet of the pulse at the carotid (0.8 of the
+  way up the left common carotid), the common femoral and the radial at
+  the wrist; the difference of the two path lengths from the arch over
+  the difference of the two times. That is the published "real" carotid-
+  femoral velocity (0.8 x the direct distance over the delay: the 0.8
+  was calibrated to give this path difference) and the carotid-radial
+  velocity by subtracted distances.
+
+  BODY   Size multiplies every length and radius (1 = an adult of about
+  175 cm). LV.Scale multiplies the ventricle's valve flow, so the stroke
+  volume. MeanP, when above 0, sets the total peripheral resistance to
+  MeanP over the mean flow; at 0 the resistance is RTotal.
+
+  VASOCONSTRICTION AND VASODILATATION   RFactor multiplies that total
+  resistance, whichever way it was set, so every bed's resistance in
+  the same proportion. A bed keeps its matched entry resistance (its
+  artery's characteristic impedance) and its compliance; the change is
+  all in the resistance beyond the compliance, which is where the
+  arterioles are. Above 1 is constriction, below 1 dilatation. The
+  inflow is imposed, so the mean pressure follows RFactor in proportion:
+  the ventricle does not eject less against the higher pressure.
+
   INPUT   One-way: the valve flow of the ventricle's last beat is
   imposed at the inlet, repeated every period. The ventricle does not
   feel the aorta here. }
@@ -65,6 +92,8 @@ type
   public
     T, Q, PRoot, PLV: array of Double;   { s, mL/s, mmHg }
     Period: Double;
+    Scale: Double;                       { multiplies Q: 1 unless set }
+    constructor Create;
     procedure Load(const FileName: string);
     function Flow(tt: Double): Double;
     function StrokeVolume: Double;
@@ -99,6 +128,11 @@ type
     RTotal: Double;             { mmHg s/mL }
     CPeriph: Double;            { mL/mmHg in the lumped beds; 0 = pure resistances }
     WallTau: Double;            { wall retardation time phi/E, ms; 0 = elastic wall }
+    Size: Double;               { multiplies lengths and radii }
+    MeanP: Double;              { mmHg; above 0 it sets the resistance used }
+    RFactor: Double;            { multiplies the resistance: >1 constricted, <1 dilated }
+    RUsed: Double;              { mmHg s/mL, of the last run }
+    CFPWV, CRPWV: Double;       { carotid-femoral, carotid-radial, cm/s }
     Beats: Integer;
     DtOut, DtFrame: Double;
     Probes: array of TProbe;
@@ -129,6 +163,12 @@ type
 implementation
 
 { ---- TLVInput ---- }
+
+constructor TLVInput.Create;
+begin
+  inherited Create;
+  Scale := 1;
+end;
 
 procedure TLVInput.Load(const FileName: string);
 var
@@ -173,7 +213,7 @@ begin
   f := tt / Period * n;
   i := Min(Floor(f), n - 1);
   f := f - i;
-  Result := (1 - f) * Q[i] + f * Q[i + 1];
+  Result := Scale * ((1 - f) * Q[i] + f * Q[i + 1]);
 end;
 
 function TLVInput.StrokeVolume: Double;
@@ -182,6 +222,7 @@ var
 begin
   Result := 0;
   for i := 1 to High(T) do Result := Result + 0.5 * (Q[i] + Q[i - 1]) * (T[i] - T[i - 1]);
+  Result := Scale * Result;
 end;
 
 { ---- TAortaSim ---- }
@@ -194,6 +235,7 @@ begin
   HTarget := 0.5; CFL := 0.6;
   CPeriph := 0.8;
   WallTau := 5;       { assumed: see uArtery1D }
+  Size := 1; MeanP := 0; RFactor := 1;
   RTotal := 1.147;    { the ventricle model's Windkessel: Zc + Rp }
   Beats := 25;
   DtOut := 0.001; DtFrame := 0.004;
@@ -219,7 +261,7 @@ var
     Probes[k].Name := AName;
     Probes[k].V := T.FindVessel(Vessel);
     Probes[k].S := AS_;
-    Probes[k].Dist := ADist;
+    Probes[k].Dist := Size * ADist;
   end;
 
   procedure Path(Index: Integer; const AName: string; const Names: array of string);
@@ -252,43 +294,48 @@ begin
   T := TArterialTree.Create;
   Tree := T;
   { the aorta }
-  T.AddVessel('ascending aorta', 0, 1, 4.0, 1.47, 1.44, True);
-  T.AddVessel('aortic arch A', 1, 2, 2.0, 1.20, 1.12, True);
-  T.AddVessel('aortic arch B', 2, 3, 3.9, 1.12, 1.07, True);
-  T.AddVessel('thoracic aorta A', 3, 4, 5.2, 1.00, 0.95, True);
-  T.AddVessel('thoracic aorta B', 4, 5, 10.4, 0.95, 0.65, True);
-  T.AddVessel('abdominal aorta A', 5, 6, 5.3, 0.65, 0.61, True);
-  T.AddVessel('abdominal aorta B', 6, 7, 1.0, 0.60, 0.59, True);
-  T.AddVessel('abdominal aorta C', 7, 8, 10.6, 0.58, 0.55, True);
-  T.AddVessel('abdominal aorta D', 8, 9, 1.0, 0.52, 0.52, True);
+  T.AddVessel('ascending aorta', 0, 1, Size * 4.0, Size * 1.47, Size * 1.44, True);
+  T.AddVessel('aortic arch A', 1, 2, Size * 2.0, Size * 1.20, Size * 1.12, True);
+  T.AddVessel('aortic arch B', 2, 3, Size * 3.9, Size * 1.12, Size * 1.07, True);
+  T.AddVessel('thoracic aorta A', 3, 4, Size * 5.2, Size * 1.00, Size * 0.95, True);
+  T.AddVessel('thoracic aorta B', 4, 5, Size * 10.4, Size * 0.95, Size * 0.65, True);
+  T.AddVessel('abdominal aorta A', 5, 6, Size * 5.3, Size * 0.65, Size * 0.61, True);
+  T.AddVessel('abdominal aorta B', 6, 7, Size * 1.0, Size * 0.60, Size * 0.59, True);
+  T.AddVessel('abdominal aorta C', 7, 8, Size * 10.6, Size * 0.58, Size * 0.55, True);
+  T.AddVessel('abdominal aorta D', 8, 9, Size * 1.0, Size * 0.52, Size * 0.52, True);
   { the legs, to the common femoral arteries }
-  T.AddVessel('left common iliac', 9, 10, 5.8, 0.40, 0.37, False);
-  T.AddVessel('left external iliac', 10, 11, 14.4, 0.32, 0.27, False);
-  T.AddVessel('right common iliac', 9, 12, 5.8, 0.40, 0.37, False);
-  T.AddVessel('right external iliac', 12, 13, 14.4, 0.32, 0.27, False);
+  T.AddVessel('left common iliac', 9, 10, Size * 5.8, Size * 0.40, Size * 0.37, False);
+  T.AddVessel('left external iliac', 10, 11, Size * 14.4, Size * 0.32, Size * 0.27, False);
+  T.AddVessel('right common iliac', 9, 12, Size * 5.8, Size * 0.40, Size * 0.37, False);
+  T.AddVessel('right external iliac', 12, 13, Size * 14.4, Size * 0.32, Size * 0.27, False);
   { the left arm }
-  T.AddVessel('left subclavian', 3, 14, 3.4, 0.42, 0.40, False);
-  T.AddVessel('left brachial', 14, 15, 42.2, 0.40, 0.24, False);
-  T.AddVessel('left radial', 15, 16, 23.5, 0.174, 0.142, False);
+  T.AddVessel('left subclavian', 3, 14, Size * 3.4, Size * 0.42, Size * 0.40, False);
+  T.AddVessel('left brachial', 14, 15, Size * 42.2, Size * 0.40, Size * 0.24, False);
+  T.AddVessel('left radial', 15, 16, Size * 23.5, Size * 0.174, Size * 0.142, False);
+  { to the head: where the carotid pulse is felt }
+  T.AddVessel('left common carotid', 2, 17, Size * 20.8, Size * 0.37, Size * 0.37, True);
   { the branches not modelled, with their share of the cardiac output, % }
   T.SetInlet(0);
-  T.AddLeak(0, 'coronaries', 4.5, 0.17, 2);
-  T.AddLeak(1, 'brachiocephalic', 11.5, 0.62);
-  T.AddLeak(2, 'left common carotid', 6.5, 0.37);
-  T.AddLeak(4, 'intercostals', 4.0, 0.30);
-  T.AddLeak(5, 'coeliac', 14.0, 0.39);
-  T.AddLeak(6, 'superior mesenteric', 12.0, 0.43);
-  T.AddLeak(7, 'renals', 20.0, 0.26, 2);
-  T.AddLeak(8, 'inferior mesenteric', 3.5, 0.16);
-  T.AddLeak(10, 'left internal iliac', 3.5, 0.20);
+  T.AddLeak(0, 'coronaries', 4.5, Size * 0.17, 2);
+  T.AddLeak(1, 'brachiocephalic', 11.5, Size * 0.62);
+  T.AddLeak(17, 'left common carotid (head)', 6.5);
+  T.AddLeak(4, 'intercostals', 4.0, Size * 0.30);
+  T.AddLeak(5, 'coeliac', 14.0, Size * 0.39);
+  T.AddLeak(6, 'superior mesenteric', 12.0, Size * 0.43);
+  T.AddLeak(7, 'renals', 20.0, Size * 0.26, 2);
+  T.AddLeak(8, 'inferior mesenteric', 3.5, Size * 0.16);
+  T.AddLeak(10, 'left internal iliac', 3.5, Size * 0.20);
   T.AddLeak(11, 'left common femoral (leg)', 6.0);
-  T.AddLeak(12, 'right internal iliac', 3.5, 0.20);
+  T.AddLeak(12, 'right internal iliac', 3.5, Size * 0.20);
   T.AddLeak(13, 'right common femoral (leg)', 6.0);
-  T.AddLeak(14, 'left vertebral', 1.5, 0.19);
-  T.AddLeak(15, 'left ulnar and interosseous', 2.2, 0.21);
+  T.AddLeak(14, 'left vertebral', 1.5, Size * 0.19);
+  T.AddLeak(15, 'left ulnar and interosseous', 2.2, Size * 0.21);
   T.AddLeak(16, 'left radial at the wrist (hand)', 1.3);
   T.WallTau := WallTau / 1000;
-  T.Build(HTarget, AorticStiff, OtherStiff, RTotal * mmHg, CPeriph / mmHg);
+  RUsed := RTotal;
+  if MeanP > 0 then RUsed := MeanP / (LV.StrokeVolume / LV.Period);
+  RUsed := RUsed * RFactor;
+  T.Build(HTarget, AorticStiff, OtherStiff, RUsed * mmHg, CPeriph / mmHg);
   T.Inflow := LV.Flow;
 
   Probe('aortic root', 'ascending aorta', 0, 0);
@@ -300,6 +347,7 @@ begin
   Probe('left subclavian', 'left subclavian', 0.5, 11.6);
   Probe('left brachial (elbow)', 'left brachial', 1, 55.5);
   Probe('left radial (wrist)', 'left radial', 1, 79.0);
+  Probe('left carotid', 'left common carotid', 0.8, 6.0 + 0.8 * 20.8);
   Path(0, 'valve to left radial', ['ascending aorta', 'aortic arch A', 'aortic arch B',
     'left subclavian', 'left brachial', 'left radial']);
   Path(1, 'valve to left common femoral', ['ascending aorta', 'aortic arch A', 'aortic arch B',
@@ -448,6 +496,11 @@ begin
       Probes[i].PWV := Probes[i].Dist / (Probes[i].TFoot - Probes[0].TFoot)
     else
       Probes[i].PWV := 0;
+  i := ProbeIndex('left carotid');
+  k := ProbeIndex('left common femoral');
+  CFPWV := (Probes[k].Dist - Probes[i].Dist) / (Probes[k].TFoot - Probes[i].TFoot);
+  k := ProbeIndex('left radial (wrist)');
+  CRPWV := (Probes[k].Dist - Probes[i].Dist) / (Probes[k].TFoot - Probes[i].TFoot);
 end;
 
 procedure TAortaSim.WriteCSV(const FileName: string);

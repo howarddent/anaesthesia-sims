@@ -60,6 +60,7 @@ type
     FProcOut: string;
     FProcFile: string;
     FUpdating: Boolean;
+    FInactive: Boolean;
     // the plots' fixed data
     FV, FP, FT, FPRoot, FPLA, FQAV, FQMV: TVMobj;
 
@@ -89,6 +90,11 @@ type
     constructor CreateNew(AOwner: TComponent; Num: Integer = 0); override;
     destructor Destroy; override;
     procedure LoadAnim(const Fn: string);
+    { for circ_sim: sits inside AParent with no frame, the row that
+      computes hidden (the host computes) }
+    procedure Embed(AParent: TWinControl);
+    { the animation runs only while Active (the host's visible tab) }
+    procedure SetActive(Active: Boolean);
     // stops the animation at frame j
     procedure ShowFrameAt(j: Integer);
     function SaveSnapshot(const Prefix: string): Boolean;
@@ -442,7 +448,7 @@ begin
   i0 := 0;
   ShowFrame(i0);
   Restart(i0);
-  FPlay.Enabled := True;
+  FPlay.Enabled := not FInactive;
   btnPlay.Caption := 'Pause';
 end;
 
@@ -653,6 +659,30 @@ begin
   finally
     D.Free;
   end;
+end;
+
+procedure TLVViewForm.Embed(AParent: TWinControl);
+begin
+  Position := poDesigned;
+  BorderStyle := bsNone;
+  Parent := AParent;
+  Align := alClient;
+  pnlRow2.Visible := False;
+  pnlTop.Height := 36;
+  btnOpen.Visible := False;
+  Visible := True;
+end;
+
+procedure TLVViewForm.SetActive(Active: Boolean);
+begin
+  FInactive := not Active;
+  if Active and (btnPlay.Caption = 'Pause') and (FAnim.Frames > 0) then
+  begin
+    Restart(FView.Frame);
+    FPlay.Enabled := True;
+  end
+  else
+    FPlay.Enabled := False;
 end;
 
 procedure TLVViewForm.PlayClick(Sender: TObject);

@@ -11,6 +11,10 @@ program aortarun;
     --stiff=<x>      aortic elastance, times normal [1]
     --stiffother=<x> the same for the iliacs and the arm [1]
     --rtot=<R>       total peripheral resistance, mmHg s/mL [1.147]
+    --meanp=<mmHg>   mean pressure: sets the resistance instead; 0 = use --rtot [0]
+    --pvr=<x>        multiplies that resistance: above 1 vasoconstriction, below 1 dilatation [1]
+    --size=<x>       multiplies every length and radius [1]
+    --flow=<x>       multiplies the ventricle's valve flow [1]
     --walltau=<ms>   wall retardation time phi/E, ms [5]; 0 = elastic wall
     --cperiph=<C>    compliance of the lumped beds, mL/mmHg [0.8]; each bed
                      a matched Windkessel. 0: pure resistances
@@ -65,6 +69,10 @@ begin
   Result.AorticStiff := Opt('stiff', 1);
   Result.OtherStiff := Opt('stiffother', 1);
   Result.RTotal := Opt('rtot', Result.RTotal);
+  Result.Size := Opt('size', 1);
+  Result.LV.Scale := Opt('flow', 1);
+  Result.MeanP := Opt('meanp', 0);
+  Result.RFactor := Opt('pvr', 1);
   Result.CPeriph := Opt('cperiph', Result.CPeriph);
   Result.WallTau := Opt('walltau', Result.WallTau);
   Result.Beats := Round(Opt('beats', Result.Beats));
@@ -93,7 +101,7 @@ begin
   for i := 0 to High(S.Tree.J) do
     if S.Tree.J[i].G > 0 then
       Writeln(Format('  %-32s %7.1f  %6.2f  %6.3f   %6.2f mL/s  %5.1f %%', [S.Tree.J[i].Leaks,
-        S.RTotal * 100 / S.Tree.J[i].Fraction, S.Tree.J[i].Zc / mmHg, S.Tree.J[i].C * mmHg, S.LeakMean[i], 100 * S.LeakMean[i] * S.LV.Period / S.VolIn]));
+        S.RUsed * 100 / S.Tree.J[i].Fraction, S.Tree.J[i].Zc / mmHg, S.Tree.J[i].C * mmHg, S.LeakMean[i], 100 * S.LeakMean[i] * S.LV.Period / S.VolIn]));
   Writeln;
 end;
 
@@ -135,7 +143,7 @@ begin
   Writeln(Format('Ventricle: %s, %.1f /min, stroke volume through the valve %.1f mL',
     [OptS('lv', '../LeftVentricle/out/beat.csv'), 60 / S.LV.Period, S.LV.StrokeVolume]));
   Writeln(Format('Aortic elastance x %.2f, other vessels x %.2f; total peripheral resistance %.3f mmHg s/mL',
-    [S.AorticStiff, S.OtherStiff, S.RTotal]));
+    [S.AorticStiff, S.OtherStiff, S.RUsed]));
   Writeln(Format('%d beats in %.1f s; last beat %d steps (mean %.0f us)',
     [S.Beats, (GetTickCount64 - tick) / 1000, S.Steps, 1e6 * S.LV.Period / S.Steps]));
   Writeln(Format('Last beat: pressures repeat to %.3f mmHg; volume in %.2f mL, out %.2f, stored %.3f',
@@ -157,6 +165,8 @@ begin
   Writeln(Format('Pulse wave: valve to wrist %.0f ms (%.1f m/s over %.0f cm), valve to groin %.0f ms (%.1f m/s over %.1f cm)',
     [1000 * (S.Probes[ir].TFoot - S.Probes[0].TFoot), S.Probes[ir].PWV / 100, S.Probes[ir].Dist,
      1000 * (S.Probes[ifm].TFoot - S.Probes[0].TFoot), S.Probes[ifm].PWV / 100, S.Probes[ifm].Dist]));
+  Writeln(Format('Carotid-femoral velocity %.2f m/s, carotid-radial %.2f m/s (path difference over the delay between the feet)',
+    [S.CFPWV / 100, S.CRPWV / 100]));
   x := (S.Probes[ir].Sys - S.Probes[ir].Dia) / (S.Probes[0].Sys - S.Probes[0].Dia);
   Writeln(Format('Pulse pressure at the wrist is %.2f times that at the root (brachial %.2f, femoral %.2f)',
     [x, (S.Probes[ib].Sys - S.Probes[ib].Dia) / (S.Probes[0].Sys - S.Probes[0].Dia),
