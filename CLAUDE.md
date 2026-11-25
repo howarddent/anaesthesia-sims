@@ -809,7 +809,13 @@ circulation. Each unit's header has the equations.
     entry; PARDISO analysed once and refactorised
     (`TPardisoFactor.Refactor`, added to `newVMsparse.pas` for this, with
     a test: suite 330/330). A linear predictor starts each step. About
-    3.2 iterations a step and 19-35 s a beat.
+    3.2 iterations a step. A beat is 7.7 s on the mac (M4 Max) since
+    newVM `bd14b27`, which stopped the Accelerate `Refactor` repeating
+    the symbolic factorisation every iteration: 29.5 s before it, of
+    which the solver was 25.9 s against 2.4 s now (`lvrun --beats=1
+    --profile`, 2026-11-25). The 19-35 s range recorded here is from
+    before that fix and was never attributed to a machine; the P620's
+    MKL build reused the analysis all along, so it is unaffected.
 - `uLVCirc.pas` (`TLVCirc`): pulmonary venous pressure and resistance, a
   left atrium (elastance with a sin^2 atrial systole), Mynard 2012
   valves (Bernoulli loss, inertance, an opening state; Mynard & Smolich
@@ -1110,7 +1116,8 @@ Compute for both.
   version before it ran lvrun into its Windkessel and then the tree on
   its flow). It runs `../LeftVentricle/lvrun --arteries` with every
   arterial setting through `TProcess` into `out/cs_<all settings>.txt`
-  and `.csv` (two output lines a beat; about 4 min for 8 beats), loads
+  and `.csv` (two output lines a beat; 72 s for 8 beats on the mac
+  since newVM `bd14b27`, about 4 min before it), loads
   the motion, then runs `TAortaSim` in-process on that csv for the
   pictures. That replay reproduces the coupled tree (root pressure
   within ~0.2 mmHg, bar one sample at valve closure). A beat already in
@@ -1127,7 +1134,8 @@ Compute for both.
     local impedance is implicit and reflected waves lag one 2 ms step.
   - After each accepted step `Advance` takes the tree over it in its
     explicit steps with the inflow ramped.
-  - **Settling**: a ventricle beat costs ~27 s, a tree beat 0.4-1 s, and
+  - **Settling**: a ventricle beat costs ~8 s on the mac since newVM
+    `bd14b27` (~27 s before it), a tree beat 0.4-1 s, and
     the beds need ~20 beats. So between ventricle beats `Settle` runs the
     tree alone on the last beat's flow (25 beats after the first, then 6;
     `--settle`). The converged beat is a periodic coupled solution; the
