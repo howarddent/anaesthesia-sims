@@ -1826,6 +1826,49 @@ Rev Respir Dis 1987).
   `--tauo2`, `--taun2`, `--rm`, `--dt`, `--out`. Files:
   `out/absorb_<run>.csv`, a row per breath.
 
+#### Stage 7: blood gases (2026-11-26)
+
+`uGasExchange.pas` (its header has the model), `gascheck.lpr`, and blood
+gases in `absorbrun` after every breath (columns `PaO2_mmHg`,
+`PaCO2_mmHg`, `SaO2`, `PvO2_mmHg`, `shunt_after_HPV_pct`; bottom row of
+`out/absorb.png`).
+
+- **Model**: West's steady-state compartments, one per unit. Each unit's
+  end-capillary blood equals its alveolar gas: `K VA (PIO2 - PAO2) =
+  10 Q (Cc - CvO2)` for oxygen and `K VA PACO2 = 10 Q (CvCO2 - Cc)` for
+  CO2, with K = 0.826/713 (BTPS to STPD; no nitrogen correction). Both
+  are solved by bisection. Mixed venous blood comes from Fick, damped to
+  a fixed point. O2 content uses Severinghaus' curve with Hb 15; CO2
+  content is `11.2 P^0.4` (assumed). Defaults: VO2 250 and VCO2
+  200 mL/min, cardiac output 5 L/min. There is no Bohr or Haldane
+  effect.
+- **From the lung model**: a unit's alveolar ventilation is its inflow
+  that breath times the rate, less its share of the 150 mL dead space.
+  A unit that took in nothing is a shunt. Units shut all breath still
+  give up oxygen for a few minutes, which the steady-state model
+  ignores, so it counts them as shunt from the start.
+- **Hypoxic pulmonary vasoconstriction** (on by default; `--hpvmax`
+  0.6, `--hpv50` 60 mmHg, both assumed): perfusion is scaled by
+  `1 - HPVMax (1 - s)`, with `s = PAO2^4 / (PAO2^4 + HPV50^4)`, iterated
+  with the gases. Shunt units see mixed venous gas and constrict.
+- **New runs**: `asthma_air`, `asthma_o2_nohpv`, `normal_air`. The
+  stage-6 columns are unchanged, since the gases don't feed back.
+- **Checks** (`gascheck`, built with `fpc -O3 -FUlib gascheck.lpr`), all
+  exact unless stated:
+  - one ideal unit gives the alveolar gas equation;
+  - Fick returns VO2 and VCO2;
+  - a 30 % shunt obeys the shunt equation;
+  - Severinghaus gives P50 26.8 (to 0.3 %);
+  - V/Q mismatch alone (0.2 and 1.4) drops PaO2 from 96 to 52 mmHg and
+    raises PaCO2, and FiO2 0.4 brings PaO2 back to 134.
+- **Early results** (first minutes; the full 23-minute runs to follow):
+  - normal lung: PaO2 97 on air, 661 on oxygen, PaCO2 41;
+  - asthma on air: PaO2 66 (SaO2 0.93) with 14 % shunt;
+  - asthma on 40 %: PaO2 98 (P/F 246);
+  - asthma on oxygen, once the shut units have collapsed: PaO2 354 with
+    HPV (15 % shunt), 161 without (24 %);
+  - asthma on oxygen without hysteresis: PaO2 510 (2 % shunt).
+
 ## demos/
 
 Each is a standalone Lazarus project (own `.lpi`/`.lpr`/form unit/`.lfm`), built against newVM in the submodule.

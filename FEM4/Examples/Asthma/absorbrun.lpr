@@ -37,13 +37,28 @@ program absorbrun;
   (name custom), --tauo2, --taun2, --rm=<cmH2O> (35), --dt (0.004),
   --out (out). Writes <out>/absorb_<run>.csv, a row per breath.
 
+  BLOOD GASES (stage 7)   after every breath, uGasExchange's
+  steady-state compartment model over the 256 units gives PaO2, PaCO2
+  and SaO2 (VO2 250, VCO2 200 mL/min, cardiac output 5 L/min, Hb 15).
+  A unit's alveolar ventilation is the gas it took in that breath times
+  the rate, less its share of the 150 mL dead space (each unit's in
+  proportion to its inflow); a unit that took in nothing is a shunt.
+  Hypoxic pulmonary vasoconstriction (HPV) scales each unit's perfusion
+  by 1 - HPVMax (1 - s), s = PAO2^4 / (PAO2^4 + HPV50^4) (HPVMax 0.6,
+  HPV50 60 mmHg, assumed: a fully hypoxic unit keeps 40 % of its
+  perfusion), iterated with the gases to a fixed point; collapsed and
+  unventilated units see mixed venous gas and constrict. Options
+  --hpvmax, --hpv50. Units shut all breath still hold gas and give up
+  oxygen for a few minutes, which the steady-state model ignores, so it
+  counts them as shunt from the start.
+
   Build:  fpc -O3 -FUlib -Fu../../../newVM -Fi../../../newVM absorbrun.lpr }
 
 {$mode delphi}{$H+}
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, Math, StrUtils, cblas, newVM, uTubeLaw, uAirwayRing, uAlveolus, uLungModel, uPatchyLung;
+  SysUtils, Classes, Math, StrUtils, cblas, newVM, uTubeLaw, uAirwayRing, uAlveolus, uLungModel, uPatchyLung, uGasExchange;
 
 type
   TZero = class
@@ -53,7 +68,7 @@ type
   TRun = record
     Name: string;
     Asthma: Boolean;
-    FiO2, Hyst: Double;
+    FiO2, Hyst, HPV: Double;
   end;
 
 function TZero.P(t, V: Double): Double;
@@ -68,6 +83,8 @@ var
   TauO2: Double = 90;
   TauN2: Double = 3 * 3600;
   PRM_: Double = 35;
+  HPVMax: Double = 0.6;
+  HPV50: Double = 60;
   Prm: TLungParams;
   Alv: TAlveolusParams;
   RefLaws: array[0..NWall - 1] of TTubeLaw;
@@ -122,6 +139,10 @@ var
   NU, u, k, nStep, b, nb, nShut, nEE, nColl, nEver: Integer;
   VF, FO2, Perf: array of Double;
   Coll, Ever, OpenB: array of Boolean;
+  VIn, VAu, Qu, PAO2, PACO2: array of Double;
+  BG: TBloodGases;
+  GP: TGasParams;
+  vinTot, qShunt: Double;
   frc, Ti, Te, FIn, perfTot, pShut, pColl, eev, ppk, vo2, vi, dV, tAbs, fo2Shut, t1s: Double;
   phase: Integer;
   F: TStringList;
@@ -176,6 +197,42 @@ var
     Sim.Evaluate;
   end;
 
+  { blood gases from this breath's unit inflows, with HPV }
+  procedure Gases;
+  var
+    w, it: Integer;
+    sat, h: Double;
+  begin
+    vinTot := 0;
+    for w := 0 to NU - 1 do vinTot := vinTot + VIn[w];
+    for w := 0 to NU - 1 do
+    begin
+      if (vinTot > Prm.VDead) and (VIn[w] > 0) then
+        VAu[w] := Rate * VIn[w] * (1 - Prm.VDead / vinTot)
+      else VAu[w] := 0;
+      Qu[w] := Perf[w];
+    end;
+    for it := 1 to 8 do
+    begin
+      BG := BloodGases(VAu, Qu, GP, PAO2, PACO2);
+      if R.HPV <= 0 then Break;
+      for w := 0 to NU - 1 do
+      begin
+        sat := Power(PAO2[w], 4) / (Power(PAO2[w], 4) + Power(HPV50, 4));
+        h := 1 - HPVMax * (1 - sat);
+        Qu[w] := Sqrt(Qu[w] * Perf[w] * h);   { damped }
+      end;
+    end;
+    qShunt := 0;
+    h := 0;
+    for w := 0 to NU - 1 do
+    begin
+      h := h + Qu[w];
+      if VAu[w] <= 0 then qShunt := qShunt + Qu[w];
+    end;
+    qShunt := qShunt / h;
+  end;
+
   procedure Advance(Dur: Double);
   var
     s, n, w: Integer;
@@ -186,7 +243,10 @@ var
       Sim.Step;
       ppk := Max(ppk, Sim.Paw);
       for w := 0 to NU - 1 do
+      begin
         if not L.Shut[w] then OpenB[w] := True;
+        if L.Qu[w] < 0 then VIn[w] := VIn[w] - L.Qu[w] * Sim.Dt / LitreMM3;
+      end;
       Inc(nStep);
       Gas(nStep mod 25 = 0);
     end;
@@ -205,14 +265,17 @@ begin
     A.Act := 0; A.Thick := 1; A.Mucus := 1; PP.Sigma := 0;
   end;
   FIn := 0.938 * R.FiO2 - 0.05;
-  Writeln(Format('=== %s: FiO2 %.2f (alveolar O2 fraction of fresh gas %.3f), hysteresis %.1f, tau O2 %.0f s, N2 %.0f min',
-    [R.Name, R.FiO2, FIn, R.Hyst, TauO2, TauN2 / 60]));
+  Writeln(Format('=== %s: FiO2 %.2f (alveolar O2 fraction of fresh gas %.3f), hysteresis %.1f, HPV %s, tau O2 %.0f s, N2 %.0f min',
+    [R.Name, R.FiO2, FIn, R.Hyst, IfThen(R.HPV > 0, 'on', 'off'), TauO2, TauN2 / 60]));
   L := TPatchyLung.Create(Prm, PP, A, Alv, RefLaws);
   { with no hysteresis the closure state is still tracked (a unit
     reopens at its closing pressure), so a collapsed unit can be held }
   L.Hysteresis := Max(R.Hyst, 1e-12);
   NU := L.NU;
   SetLength(VF, NU); SetLength(FO2, NU); SetLength(Perf, NU); SetLength(Coll, NU); SetLength(Ever, NU); SetLength(OpenB, NU);
+  SetLength(VIn, NU); SetLength(VAu, NU); SetLength(Qu, NU); SetLength(PAO2, NU); SetLength(PACO2, NU);
+  GP := DefaultGasParams;
+  GP.FiO2 := R.FiO2;
   L.StaticState(0, VF);
   frc := Prm.VDead; perfTot := 0;
   for u := 0 to NU - 1 do
@@ -237,14 +300,17 @@ begin
   nb := Round(Minutes * Rate);
   F := TStringList.Create;
   F.Add('breath,t_min,phase,EEV_above_FRC_mL,Ppeak_cmH2O,units_shut_all_breath,units_shut_end_exp,units_collapsed,units_ever_absorbing,'
-    + 'perf_shut_pct,perf_collapsed_pct,FO2_shut_mean');
+    + 'perf_shut_pct,perf_collapsed_pct,FO2_shut_mean,PaO2_mmHg,PaCO2_mmHg,SaO2,PvO2_mmHg,shunt_after_HPV_pct');
   nStep := 0;
   b := 0;
   phase := 0;
   while True do
   begin
     Inc(b);
-    for u := 0 to NU - 1 do OpenB[u] := False;
+    for u := 0 to NU - 1 do
+    begin
+      OpenB[u] := False; VIn[u] := 0;
+    end;
     if (phase = 0) and (b > nb) then
     begin
       { recruitment manoeuvre }
@@ -281,13 +347,19 @@ begin
     end;
     if nShut > 0 then fo2Shut := fo2Shut / nShut;
     t1s := Sim.T / 60;
-    F.Add(Format('%d,%.3f,%d,%.1f,%.2f,%d,%d,%d,%d,%.2f,%.2f,%.4f', [b, t1s, phase, 1000 * (eev - frc), Cm(ppk),
-      nShut, nEE, nColl, nEver, 100 * pShut / perfTot, 100 * pColl / perfTot, fo2Shut]));
+    { the recruitment breath's inflow is the manoeuvre, not a breath }
+    if not ((phase = 1) and (b = nb + 1)) then Gases;
+    F.Add(Format('%d,%.3f,%d,%.1f,%.2f,%d,%d,%d,%d,%.2f,%.2f,%.4f,%.1f,%.2f,%.4f,%.1f,%.2f', [b, t1s, phase,
+      1000 * (eev - frc), Cm(ppk), nShut, nEE, nColl, nEver, 100 * pShut / perfTot, 100 * pColl / perfTot, fo2Shut,
+      BG.PaO2, BG.PaCO2, BG.SaO2, BG.PvO2, 100 * qShunt]));
     if (b mod Round(Rate * 2) = 0) or (b = 1) or (phase = 1) and (b = nb + 1) or
        (phase = 1) and (b = nb + 1 + Round(3 * Rate)) then
       Writeln(Format('  %5.1f min%s: EEV %5s mL, peak %4.1f; shut all breath %3d (O2 %.2f), at end exp. %3d, collapsed %3d; perfusion unventilated %4.1f %%, collapsed %4.1f %%',
         [t1s, IfThen(phase = 1, ' (after RM)', ''), Signed(1000 * (eev - frc)), Cm(ppk), nShut, fo2Shut, nEE, nColl,
          100 * pShut / perfTot, 100 * pColl / perfTot]));
+    if (b mod Round(Rate * 2) = 0) or (b = 1) or (phase = 1) and (b = nb + 1 + Round(3 * Rate)) then
+      Writeln(Format('           PaO2 %5.1f mmHg (P/F %3.0f), PaCO2 %4.1f, SaO2 %.3f, PvO2 %4.1f; shunt %4.1f %% of the cardiac output',
+        [BG.PaO2, BG.PaO2 / R.FiO2, BG.PaCO2, BG.SaO2, BG.PvO2, 100 * qShunt]));
   end;
   F.SaveToFile(Format('%s/absorb_%s.csv', [OutDir, R.Name]));
   F.Free;
@@ -302,11 +374,13 @@ var
   notes, only: string;
   cust: TRun;
 
-procedure AddRun(const N: string; As_: Boolean; FiO2, Hyst: Double);
+procedure AddRun(const N: string; As_: Boolean; FiO2, Hyst: Double; HPV: Double = 1);
 begin
+
   SetLength(Runs, Length(Runs) + 1);
   Runs[High(Runs)].Name := N; Runs[High(Runs)].Asthma := As_;
   Runs[High(Runs)].FiO2 := FiO2; Runs[High(Runs)].Hyst := Hyst;
+  Runs[High(Runs)].HPV := HPV;
 end;
 
 begin
@@ -320,6 +394,8 @@ begin
   OptVal('tauo2', TauO2);
   OptVal('taun2', TauN2);
   OptVal('rm', PRM_);
+  OptVal('hpvmax', HPVMax);
+  OptVal('hpv50', HPV50);
   Prm := DefaultLungParams;
   Prm.K1 := 1; Prm.K2 := 4;
   Alv := FitAlveolus(Prm.PTLC * CmH2O, Prm.PSalineTLC * CmH2O, 0.126);
@@ -329,6 +405,9 @@ begin
   AddRun('asthma_fio2_04', True, 0.4, 1);
   AddRun('asthma_o2_nohyst', True, 1.0, 0);
   AddRun('normal_o2', False, 1.0, 1);
+  AddRun('asthma_air', True, 0.21, 1);
+  AddRun('asthma_o2_nohpv', True, 1.0, 1, 0);
+  AddRun('normal_air', False, 0.21, 1);
   cust.FiO2 := 1; cust.Hyst := 1;
   if OptVal('fio2', cust.FiO2) or OptVal('hyst', cust.Hyst) then
   begin
