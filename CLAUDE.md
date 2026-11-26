@@ -37,7 +37,7 @@ in newVM's `CLAUDE.md`.
 | `FEM4/Examples/LeftVentricle/` | Finite-element left ventricle (Hill fibres, lumped valves and circulation) with the LVView viewer; needs newVM's `TPardisoFactor.Refactor` (d02cff7 or later) |
 | `FEM4/Examples/Aorta/` | 1-D finite-element pulse waves from the aortic valve to the femorals and the left wrist, with the AortaView viewer; reads LeftVentricle's `out/beat.csv` |
 | `FEM4/Examples/circ_sim/` | LeftVentricle and Aorta in one window, on two tabs, with one Compute; uses both projects' units and `../LeftVentricle/lvrun` |
-| `FEM4/Examples/Asthma/` | Lung mechanics in normal people and asthma: finite-element bronchiole wall (tube law) and alveolus, then a symmetric Weibel-tree lung with chest wall giving spirometry, pleural pressure, EELV and work of breathing |
+| `FEM4/Examples/Asthma/` | Lung mechanics in normal people and asthma: finite-element bronchiole wall (tube law) and alveolus, then a Weibel-tree lung with chest wall giving spirometry, pleural pressure, EELV and work of breathing, uniform or patchy |
 | `FEM4/Examples/Data/` | ThermEx1's gmsh inputs (`thermex1.geo/.msh/.scr`); ThermEx1 and ThermSlab find it as `../Data/` |
 
 Cross-project dependencies inside this repo: JetFlow and HFJV use
@@ -1471,6 +1471,106 @@ then a heterogeneous tree of many units on OpenCL.
   Pmax once the trapped pressure is overcome. The bracket is reset every
   10 breaths in case EELV is still moving; 60 cmH2O is the muscles' cap,
   and `--verbose` prints every breath.
+
+#### Stage 3: the patchy lung (2026-11-26)
+
+`uPatchyLung.pas` (its header has the model), `patchyrun.lpr`,
+`patchycheck.lpr`, `plot_patchy.py` (`out/patchy.png`: severity and
+ventilation maps). Same build line.
+
+- **Model**. The stage-2 tree, split at generation K (default 8) into
+  2^K = 256 units, each a symmetric subtree of generations K..16 with its
+  own severity s, height in the chest and alveolar volume. The trunk
+  (generations 0..K-1) is the case's asthma at s = 1 and is shared:
+  asthma's patchiness is peripheral (Venegas, Nature 2005). A unit's
+  asthma is s times the case's (activation s A.Act, thickening and lining
+  1 + s (x - 1)). s is log-normal, mean 1, built as a cascade down the
+  tree: one normal draw per airway of generations 1..K, summed along a
+  unit's path, so units sharing more of their path are more alike and
+  severe units come in patches. s is rounded to steps of 0.25 (one set of
+  FE tube laws per step, capped at 3).
+- **Layout and gravity**. The first branching splits the chest left and
+  right, the next top and bottom, alternately: K = 8 is a 16 x 16 grid
+  in a 30 x 24 cm frontal section. Upright, the pleural pressure rises
+  0.2 cmH2O per cm down (`--gravity`), so lower units start smaller and
+  ventilate more.
+- **Unit tables**. In a symmetric subtree only transmural pressures
+  matter, so each severity level's expiratory and inspiratory marches
+  are tabulated once (`TUnitTable`): the drop against flow as a fraction
+  of the subtree's largest flow (choke or lining closure), every
+  0.5 cmH2O from -40 to +80, on 41 flow points crowded towards the
+  choke. Inverted linearly. Tables are built in parallel, one thread per
+  level.
+- **Solve**. The pressure at the trunk's lower end is the one unknown:
+  each unit's flow follows from it and its alveolar pressure, and their
+  sum must run up (or down) the trunk to 0 at the mouth. Illinois regula
+  falsi, bisecting when the trunk chokes. Units may flow in opposite
+  directions (pendelluft). Heun's method on all unit volumes.
+- **Tube-law cache**. `uLungModel.BuildLaws` now builds any set of rings
+  (16 threads at a time) and keeps each law in `cache/` (gitignored),
+  keyed on every ring parameter (FNV-1a of the key, which is also the
+  file's first line). A run that has built its laws once starts in
+  seconds. Delete `cache/` after changing the ring FE. `BuildWallLaws`
+  goes through it too.
+- **Other `uLungModel` changes**. The expiratory and inspiratory
+  marches are `MarchUp`/`MarchDown` between any two generations
+  (`MouthPressure`/`AlveolarEnd` call them over the whole tree, with
+  unchanged results). `TLung.CreateAirways` builds the airways without
+  the recoil table. A generation its lining closes at every pressure is
+  now `PClose = +Infinity` (it carries no flow) rather than an
+  exception.
+- **Checks** (`patchycheck`, about 5 s once the laws are cached):
+  - with s = 1 everywhere and no gravity, the patchy lung's flow equals
+    the symmetric lung's (the whole tree marched directly) to 0.2 % at
+    six states, tidal and forced, two of them flow-limited (moderate
+    asthma, so the linings matter);
+  - the static state with gravity: each unit's recoil holds its own
+    pleural pressure, the chest wall balances, upper units are bigger
+    (12.0 against 10.2 mL);
+  - patchy: unit flows sum to the mouth flow (one unit filling while
+    another empties at zero mouth pressure gradient).
+- **Results** (`patchyrun`, 2 min for six cases; seed 1, gravity 0.2;
+  `out/patchyrun.txt`). The patchy cases have the same mean severity as
+  the uniform ones. Fast breathing is 30 /min, 600 mL. A ventilation
+  defect is a unit below half the mean specific ventilation (my
+  threshold):
+
+  | | normal | moderate | moderate, sigma 0.5 | moderate, sigma 1 | severe | severe, sigma 0.5 |
+  |---|---|---|---|---|---|---|
+  | PEF (L/s) | 7.98 | 5.85 | 5.90 | 5.95 | 3.83 | 4.12 |
+  | FEV1/FVC | 91 % | 71 % | 71 % | 71 % | 59 % | 58 % |
+  | units shut at FRC | 0 | 0 | 10 | 13 | 0 | 51 |
+  | fast: EELV above FRC (mL) | 0 | 3 | 4 | 3 | 24 | 11 |
+  | fast: work (J/min) | 7.8 | 10.2 | 10.1 | 9.9 | 13.5 | 13.5 |
+  | fast: CV of specific ventilation | 0.17 | 0.14 | 0.23 | 0.29 | 0.12 | 0.52 |
+  | fast: defects, % of lung volume | 0 | 0 | 2 | 5 | 0 | 19 |
+
+  The normal lung's 0.17 CV is gravity alone; obstruction slightly
+  evens it out (the stiffer airways set the distribution, not the
+  dependent units' compliance).
+- **What patchiness does here, and doesn't**:
+  - Spirometry, work and EELV barely move from the uniform lung at the
+    same mean severity, since the shared trunk sets most of them.
+  - It makes **ventilation defects**: 19 % of the lung at severe,
+    sigma 0.5, in clusters (the cascade), like the defects of
+    hyperpolarised-gas MRI and PET in asthma.
+  - It still makes **no dynamic hyperinflation**. The units are binary:
+    the severities that would give a long time constant are beyond the
+    lining's closure, so a unit is either near-normal or shut for the
+    whole breath. The shut units sit at their static FRC volume, with no
+    gas absorption; the real ones would be trapped at whatever volume
+    they shut at and then absorb.
+  - Getting time-constant hyperinflation would need a severity range
+    that narrows the airways without closing them (more muscle, less
+    mucus), closure with hysteresis (shut on expiration at a higher
+    volume than they reopen), or Venegas's mechanism, where narrowing
+    is self-reinforcing through the parenchymal tethering a poorly
+    ventilated unit loses.
+- Options: `--k`, `--seed`, `--gravity`, `--sigma` with `--act/--thick/
+  --mucus` for a custom case, `--only`, `--dt`, `--verbose`, `--out`.
+  Files: `out/patchy_<case>_units.csv` (one row per unit, with its
+  place, severity, volumes and ventilation), `_fv.csv`, `_rest.csv`,
+  `_fast.csv`.
 
 ## demos/
 

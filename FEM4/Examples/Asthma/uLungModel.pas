@@ -108,7 +108,7 @@ type
   TGeneration = record
     N, Len, AF: Double;
     Gas: TTubeLaw;      { gas area against transmural pressure, owned }
-    PClose: Double;     { kPa; -Infinity if it never closes }
+    PClose: Double;     { kPa; -Infinity if it never closes, +Infinity if always }
   end;
 
   TLung = class
@@ -121,6 +121,7 @@ type
     function March(g: Integer; P, q, Ppl: Double; out Choked: Boolean): Double;
     function Junction(gFrom, gTo: Integer; P, Q, Ppl: Double; out Choked: Boolean): Double;
     function Residual(q, Palv, Ppl: Double; out Choked: Boolean): Double;
+    procedure BuildAirways(const P: TLungParams; const WallLaw, RefLaw: array of TTubeLaw; Mucus: Double);
   public
     Prm: TLungParams;
     Gens: array[0..NGen - 1] of TGeneration;
@@ -131,7 +132,22 @@ type
       ratios are used). AlvP holds the fitted alveolus. }
     constructor Create(const P: TLungParams; const WallLaw, RefLaw: array of TTubeLaw;
       Mucus: Double; const Alv: TAlveolusParams);
+    { the airways alone: no recoil, so Pel and StaticVolume are unusable }
+    constructor CreateAirways(const P: TLungParams; const WallLaw, RefLaw: array of TTubeLaw;
+      Mucus: Double);
     destructor Destroy; override;
+    { Expiratory march, flow Q (mm3/s, as if every airway of each
+      generation carried Q / 2^g) from pressure P at the deep end of
+      generation GDeep up to the top of GTop; JunctionIn first takes the
+      junction from GDeep + 1 into GDeep; the upper airway is added when
+      GTop = 0. Choked, and ChokeGen, if the march can't carry Q. }
+    function MarchUp(Q, P, Ppl: Double; GDeep, GTop: Integer; JunctionIn: Boolean;
+      out Choked: Boolean): Double;
+    { Inspiratory march, flow Q > 0 into the lung, from pressure P at the
+      top of GTop (above the upper airway when GTop = 0) down to the deep
+      end of GDeep; JunctionOut ends with the junction into GDeep + 1. }
+    function MarchDown(Q, P, Ppl: Double; GTop, GDeep: Integer; JunctionOut: Boolean;
+      out Choked: Boolean): Double;
     function Pel(V: Double): Double;      { kPa, V in L }
     function Pcw(V: Double): Double;      { kPa }
     function StaticVolume(PNet: Double): Double;  { V where Pel + Pcw = PNet (kPa) }
@@ -171,6 +187,15 @@ function WallRatio(const P: TRingParams): Double;
 function FitWallM(Target: Double): Double;
 { Builds the NWall tube laws for A in parallel threads. }
 procedure BuildWallLaws(const A: TAsthma; var Laws: array of TTubeLaw; out Notes: string);
+{ Builds the tube law of every ring, at most MaxThreads at once. Each is
+  first looked for in LawCacheDir, keyed on every ring parameter, and
+  saved there once built. }
+procedure BuildLaws(const Rings: array of TRingParams; var Laws: array of TTubeLaw;
+  out Notes: string; MaxThreads: Integer = 16);
+
+var
+  { where BuildLaws keeps tube laws between runs; '' for none }
+  LawCacheDir: string = 'cache';
 
 const
   JPerCmH2OL = 0.0980665;   { J per cmH2O L }
@@ -260,6 +285,89 @@ begin
   Result := Exp(0.5 * (lo + hi));
 end;
 
+const
+  LawPLo = -150 * CmH2O;
+  LawPHi = 60 * CmH2O;
+
+{ every parameter the law depends on, as text }
+function RingKey(const P: TRingParams): string;
+var
+  l: Integer;
+begin
+  Result := Format('v1 Ri %.9g NL %d Lobes %d NT %d Kap %.9g T0 %.9g LMin %.9g Act %.9g TK %.9g TR %.9g Imp %.9g CK %.9g P %.6g %.6g',
+    [P.Ri, P.NLayers, P.Lobes, P.NT, P.KappaRatio, P.T0, P.LMin, P.Act, P.TetherK, P.TetherR,
+     P.Imperfection, P.ContactK, LawPLo, LawPHi]);
+  for l := 0 to P.NLayers - 1 do
+    Result := Result + Format(' L %.9g %.9g %.9g %.9g %d', [P.Layers[l].Thick, P.Layers[l].Mu,
+      P.Layers[l].Stiffen, P.Layers[l].Muscle, P.Layers[l].NR]);
+end;
+
+function KeyFile(const Key: string): string;
+var
+  h: QWord;
+  i: Integer;
+begin
+  { FNV-1a }
+  h := QWord($cbf29ce484222325);
+  for i := 1 to Length(Key) do
+  begin
+    h := h xor Ord(Key[i]);
+    {$PUSH}{$Q-}{$R-}
+    h := h * QWord($100000001b3);
+    {$POP}
+  end;
+  Result := IncludeTrailingPathDelimiter(LawCacheDir) + 'law_' + IntToHex(h, 16) + '.txt';
+end;
+
+function LoadLaw(const P: TRingParams; out Notes: string): TTubeLaw;
+var
+  F: TStringList;
+  pp, aa: array of Double;
+  i, n, k: Integer;
+  fn: string;
+begin
+  Result := nil; Notes := '';
+  if LawCacheDir = '' then Exit;
+  fn := KeyFile(RingKey(P));
+  if not FileExists(fn) then Exit;
+  F := TStringList.Create;
+  try
+    F.LoadFromFile(fn);
+    if (F.Count < 4) or (F[0] <> RingKey(P)) then Exit;
+    Notes := F[1];
+    n := F.Count - 2;
+    SetLength(pp, n); SetLength(aa, n);
+    for i := 0 to n - 1 do
+    begin
+      k := Pos(' ', F[i + 2]);
+      pp[i] := StrToFloat(Copy(F[i + 2], 1, k - 1));
+      aa[i] := StrToFloat(Copy(F[i + 2], k + 1, MaxInt));
+    end;
+    Result := TTubeLaw.Create;
+    Result.SetTable(pp, aa);
+  finally
+    F.Free;
+  end;
+end;
+
+procedure SaveLaw(const P: TRingParams; L: TTubeLaw; const Notes: string);
+var
+  F: TStringList;
+  i: Integer;
+begin
+  if LawCacheDir = '' then Exit;
+  ForceDirectories(LawCacheDir);
+  F := TStringList.Create;
+  try
+    F.Add(RingKey(P));
+    F.Add(Notes);
+    for i := 0 to L.Count - 1 do F.Add(Format('%.17g %.17g', [L.TableP(i), L.TableA(i)]));
+    F.SaveToFile(KeyFile(RingKey(P)));
+  finally
+    F.Free;
+  end;
+end;
+
 type
   TLawJob = class(TThread)
   public
@@ -274,32 +382,70 @@ procedure TLawJob.Execute;
 begin
   SetExceptionMask([exInvalidOp, exDenormalized, exZeroDivide, exOverflow, exUnderflow, exPrecision]);
   try
-    Law := BuildTubeLaw(P, -150 * CmH2O, 60 * CmH2O, Notes);
+    Law := BuildTubeLaw(P, LawPLo, LawPHi, Notes);
   except
     on E: Exception do Err := E.Message;
   end;
 end;
 
-procedure BuildWallLaws(const A: TAsthma; var Laws: array of TTubeLaw; out Notes: string);
+procedure BuildLaws(const Rings: array of TRingParams; var Laws: array of TTubeLaw;
+  out Notes: string; MaxThreads: Integer);
 var
-  Jobs: array[0..NWall - 1] of TLawJob;
-  w: Integer;
+  Jobs: array of TLawJob;
+  Idx: array of Integer;
+  i, next, running, k: Integer;
+  nt: string;
+  DFS: TFormatSettings;
 begin
   Notes := '';
-  for w := 0 to NWall - 1 do
-  begin
-    Jobs[w] := TLawJob.Create(True);
-    Jobs[w].P := WallRing(w, A);
-    Jobs[w].Start;
+  DFS := DefaultFormatSettings;
+  DefaultFormatSettings.DecimalSeparator := '.';
+  try
+    SetLength(Jobs, 0); SetLength(Idx, 0);
+    for i := 0 to High(Rings) do
+    begin
+      Laws[i] := LoadLaw(Rings[i], nt);
+      if Laws[i] <> nil then
+      begin
+        if nt <> '' then Notes := Notes + Format('law %d: %s', [i, nt]);
+        Continue;
+      end;
+      SetLength(Idx, Length(Idx) + 1);
+      Idx[High(Idx)] := i;
+    end;
+    { run the missing ones, MaxThreads at a time, in order of index }
+    SetLength(Jobs, Length(Idx));
+    next := 0; running := 0;
+    k := 0;
+    while k < Length(Idx) do
+    begin
+      while (next < Length(Idx)) and (next - k < MaxThreads) do
+      begin
+        Jobs[next] := TLawJob.Create(True);
+        Jobs[next].P := Rings[Idx[next]];
+        Jobs[next].Start;
+        Inc(next);
+      end;
+      Jobs[k].WaitFor;
+      if Jobs[k].Err <> '' then raise Exception.Create('BuildLaws : ' + Jobs[k].Err);
+      Laws[Idx[k]] := Jobs[k].Law;
+      SaveLaw(Rings[Idx[k]], Jobs[k].Law, Jobs[k].Notes);
+      if Jobs[k].Notes <> '' then Notes := Notes + Format('law %d: %s', [Idx[k], Jobs[k].Notes]);
+      Jobs[k].Free;
+      Inc(k);
+    end;
+  finally
+    DefaultFormatSettings := DFS;
   end;
-  for w := 0 to NWall - 1 do
-  begin
-    Jobs[w].WaitFor;
-    if Jobs[w].Err <> '' then raise Exception.Create('BuildWallLaws : ' + Jobs[w].Err);
-    Laws[w] := Jobs[w].Law;
-    if Jobs[w].Notes <> '' then Notes := Notes + Format('wall %d: %s', [w, Jobs[w].Notes]);
-    Jobs[w].Free;
-  end;
+end;
+
+procedure BuildWallLaws(const A: TAsthma; var Laws: array of TTubeLaw; out Notes: string);
+var
+  R: array[0..NWall - 1] of TRingParams;
+  w: Integer;
+begin
+  for w := 0 to NWall - 1 do R[w] := WallRing(w, A);
+  BuildLaws(R, Laws, Notes);
 end;
 
 { ---------------------------------------------------------------- }
@@ -318,19 +464,16 @@ begin
   Result.SetTable(P, A);
 end;
 
-constructor TLung.Create(const P: TLungParams; const WallLaw, RefLaw: array of TTubeLaw;
-  Mucus: Double; const Alv: TAlveolusParams);
+procedure TLung.BuildAirways(const P: TLungParams; const WallLaw, RefLaw: array of TTubeLaw;
+  Mucus: Double);
 var
   g, i, n: Integer;
   Abs_: TTubeLaw;
   Lin: TLining;
-  pt, aw, ga, VT, v, scale: Double;
+  pt, aw, ga: Double;
   cl: Boolean;
   gp, gaa: array of Double;
-  M: TAlveolus;
-  tv, tp: array of Double;
 begin
-  inherited Create;
   Prm := P;
   for g := 0 to NGen - 1 do
   begin
@@ -360,13 +503,37 @@ begin
         gp[n] := pt; gaa[n] := ga; Inc(n);
       end;
     end;
-    if n < 2 then
-      raise Exception.CreateFmt('TLung : generation %d is closed by its lining at every '
-        + 'transmural pressure up to 60 cmH2O', [g]);
     Gens[g].Gas := TTubeLaw.Create;
+    if n < 2 then
+    begin
+      { closed by its lining at every transmural pressure up to 60
+        cmH2O: nothing ever passes (a placeholder law for the area) }
+      Gens[g].PClose := Infinity;
+      SetLength(gp, 2); SetLength(gaa, 2);
+      gp[0] := 0; gp[1] := 1; gaa[0] := 1e-9; gaa[1] := 2e-9;
+    end;
     Gens[g].Gas.SetTable(gp, gaa);
     Abs_.Free;
   end;
+end;
+
+constructor TLung.CreateAirways(const P: TLungParams; const WallLaw, RefLaw: array of TTubeLaw;
+  Mucus: Double);
+begin
+  inherited Create;
+  BuildAirways(P, WallLaw, RefLaw, Mucus);
+end;
+
+constructor TLung.Create(const P: TLungParams; const WallLaw, RefLaw: array of TTubeLaw;
+  Mucus: Double; const Alv: TAlveolusParams);
+var
+  i, n: Integer;
+  VT, v, scale: Double;
+  M: TAlveolus;
+  tv, tp: array of Double;
+begin
+  inherited Create;
+  BuildAirways(P, WallLaw, RefLaw, Mucus);
   { recoil: the alveolus's deflation limb, its volume at RTLC (where it
     holds PTLC) scaled to the lung's alveolar gas at TLC }
   M := TAlveolus.Create(Alv);
@@ -492,46 +659,71 @@ begin
   end;
 end;
 
-function TLung.MouthPressure(Q, Palv, Ppl: Double; out Choked: Boolean): Double;
+function TLung.MarchUp(Q, P, Ppl: Double; GDeep, GTop: Integer; JunctionIn: Boolean;
+  out Choked: Boolean): Double;
 var
   g: Integer;
-  P, ql: Double;
+  ql: Double;
 begin
-  P := Palv;
   ChokeGen := -1;
-  for g := NGen - 1 downto 0 do
+  Choked := False;
+  if JunctionIn then
+  begin
+    P := Junction(GDeep + 1, GDeep, P, Q, Ppl, Choked);
+    if Choked then begin ChokeGen := GDeep; Exit(P); end;
+  end;
+  for g := GDeep downto GTop do
   begin
     P := March(g, P, Q / Gens[g].N, Ppl, Choked);
     if Choked then begin ChokeGen := g; Exit(P); end;
-    if g > 0 then
+    if g > GTop then
     begin
       P := Junction(g, g - 1, P, Q, Ppl, Choked);
       if Choked then begin ChokeGen := g - 1; Exit(P); end;
     end;
   end;
-  ql := Q / LitreMM3;
-  Result := P - CmH2O * (Prm.K1 * ql + Prm.K2 * ql * ql);
+  if GTop = 0 then
+  begin
+    ql := Q / LitreMM3;
+    P := P - CmH2O * (Prm.K1 * ql + Prm.K2 * ql * ql);
+  end;
+  Result := P;
 end;
 
-function TLung.AlveolarEnd(Q, Ppl: Double; out Choked: Boolean): Double;
+function TLung.MarchDown(Q, P, Ppl: Double; GTop, GDeep: Integer; JunctionOut: Boolean;
+  out Choked: Boolean): Double;
 var
   g: Integer;
-  P, ql: Double;
+  ql: Double;
 begin
-  ql := Q / LitreMM3;
-  P := -CmH2O * (Prm.K1 * ql + Prm.K2 * ql * ql);
   ChokeGen := -1;
-  for g := 0 to NGen - 1 do
+  Choked := False;
+  if GTop = 0 then
+  begin
+    ql := Q / LitreMM3;
+    P := P - CmH2O * (Prm.K1 * ql + Prm.K2 * ql * ql);
+  end;
+  for g := GTop to GDeep do
   begin
     P := March(g, P, Q / Gens[g].N, Ppl, Choked);
     if Choked then begin ChokeGen := g; Exit(P); end;
-    if g < NGen - 1 then
+    if (g < GDeep) or JunctionOut then
     begin
       P := Junction(g, g + 1, P, Q, Ppl, Choked);
       if Choked then begin ChokeGen := g + 1; Exit(P); end;
     end;
   end;
   Result := P;
+end;
+
+function TLung.MouthPressure(Q, Palv, Ppl: Double; out Choked: Boolean): Double;
+begin
+  Result := MarchUp(Q, Palv, Ppl, NGen - 1, 0, False, Choked);
+end;
+
+function TLung.AlveolarEnd(Q, Ppl: Double; out Choked: Boolean): Double;
+begin
+  Result := MarchDown(Q, 0, Ppl, 0, NGen - 1, False, Choked);
 end;
 
 { positive at q = 0, falling with q; Choked past the limit }
