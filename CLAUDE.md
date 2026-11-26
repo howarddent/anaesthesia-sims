@@ -37,6 +37,7 @@ in newVM's `CLAUDE.md`.
 | `FEM4/Examples/LeftVentricle/` | Finite-element left ventricle (Hill fibres, lumped valves and circulation) with the LVView viewer; needs newVM's `TPardisoFactor.Refactor` (d02cff7 or later) |
 | `FEM4/Examples/Aorta/` | 1-D finite-element pulse waves from the aortic valve to the femorals and the left wrist, with the AortaView viewer; reads LeftVentricle's `out/beat.csv` |
 | `FEM4/Examples/circ_sim/` | LeftVentricle and Aorta in one window, on two tabs, with one Compute; uses both projects' units and `../LeftVentricle/lvrun` |
+| `FEM4/Examples/Asthma/` | Lung mechanics in normal people and asthma: finite-element bronchiole wall (tube law) and alveolus, then a symmetric Weibel-tree lung with chest wall giving spirometry, pleural pressure, EELV and work of breathing |
 | `FEM4/Examples/Data/` | ThermEx1's gmsh inputs (`thermex1.geo/.msh/.scr`); ThermEx1 and ThermSlab find it as `../Data/` |
 
 Cross-project dependencies inside this repo: JetFlow and HFJV use
@@ -1225,6 +1226,251 @@ Compute for both.
 - `--compute`, `--hr=<n>`, `--lvbeats=<n>`, `--tab=<0|1>`,
   `--snapshot=<prefix>` (both tabs' pictures and the window per tab).
   Checked with `--compute --hr=80 --lvbeats=2` (78 s) and by snapshot.
+
+### `FEM4/Examples/Asthma`
+
+Started 2026-11-26. The aim: finite elements for one alveolus and one
+bronchiole (compliance, resistance, Starling-resistor collapse under
+raised pleural pressure), then a lung and chest wall summing many such
+units, to give peak flow, pleural pressure, end-expiratory lung volume
+and work of breathing over the cycle, in normal people and asthma.
+**Stage 1, the single unit, and stage 2, the symmetric lung and chest
+wall, are done; stage 3, a heterogeneous (patchy) lung, is next.**
+Console programs,
+plain `fpc -O3 -FUlib -Fu../../../newVM -Fi../../../newVM`. Units mm,
+kPa, s inside; cmH2O in the output. Each unit's header has the
+equations.
+
+The user's choices (asked 2026-11-26): the asthma mechanisms are smooth
+muscle tone, wall thickening, mucus and oedema, and patchy distribution.
+Two questions went unanswered and the recommended options were taken:
+a ring FE of the wall's cross-section feeding a 1-D flow model (not a
+3-D shell, not a published tube law), and a symmetric Weibel tree first,
+then a heterogeneous tree of many units on OpenCL.
+
+- `uAirwayRing.pas` (`TAirwayRing`): the bronchiole wall in cross-section,
+  plane strain, finite strain. Its result is the tube law.
+  - **Mesh**: concentric layers (mucosa, submucosa, muscle, adventitia);
+    half of one fold, the sector 0..pi/Lobes, with symmetry lines.
+    9-node quadrilaterals with a discontinuous linear pressure,
+    eliminated (bending and incompressibility both need it: Q1/P0 locks
+    in the thin stiff mucosa).
+  - **Material**: `Mu/(2b)(exp(b(I1-3))-1) - Mu ln J` per layer. Neo-Hookean
+    alone has a pressure ceiling (`Mu t/R`), past which the tube inflates
+    without limit.
+  - **Muscle**: circumferential, isometric force-length only,
+    `Act T0 (1 - ((lambda-1)/(1-LMin))^2)`, so it has an energy.
+  - **Load**: `Ptm dA/du`, A the exact area inside the quadratic inner
+    edges. Pressure or area control; area control passes through
+    buckling.
+  - **Tethering**: outward traction `TetherK (TetherR - r)` on the outer
+    surface, from Lai-Fook's `2 mu dD/D`, `mu = 0.7 Ptp` (`SetTether`).
+  - **Contact**: penalty on inner nodes that cross a symmetry line.
+  - **Solver**: its own banded `L D L'` without pivoting (everything has
+    an energy, so the tangent is symmetric). The negative pivots count
+    negative eigenvalues, and **an equilibrium that is not stable is
+    refused**. This matters: before it, a 2 % area step past buckling
+    landed on the unfolded, uniformly compressed state (still a
+    solution) and the thin ring "collapsed" at a thousand times the
+    right pressure. `MoveTo` halves the step after a failure and doubles
+    it after a success; a fixed-depth bisection couldn't get past a
+    bifurcation.
+  - **Folds**: `BestLobes` picks the fold number of least strain energy
+    at one area (half the unloaded one). The real wall can change mode
+    as it collapses; this can't. With these walls 2 or 3 folds win
+    (whole-wall collapse), not the 20 of mucosal folding: at 60 % area
+    with tone the energies of 2 and 20 folds differ by 1 %.
+  - `NormalBronchiole`/`AsthmaBronchiole`: **layer thicknesses and
+    moduli are assumed** (orders of magnitude, after Wiggs 1997 and
+    Hrousis & Kamm 2002), `T0` 100 kPa. Thickening adds wall outwards,
+    the lumen's unloaded radius kept.
+- `uTubeLaw.pas`: the law as a table with monotone cubic interpolation
+  (continuous slope, for the wave speed), and the liquid lining:
+  `AWall = Law(Ptm - Gamma/a)`, closed if there is no root or the film is
+  over 12 % of the radius (Gauglitz & Radke). Reopening isn't modelled.
+- `uBronchiole.pas` (`TBronchiole`): steady 1-D flow, Lambert 1982's
+  `dP/dx = -f/(1 - S^2)` with Reynolds' loss (1.5 + 0.0035 Re). `Flow`
+  bisects on the flow; the largest flow that reaches the airway's end is
+  the limit.
+- `uAlveolus.pas` (`TAlveolus`): an axisymmetric membrane cap with a
+  mouth ring, Fung tissue, and a surfactant film whose tension depends
+  on its area (fixed deflation and inflation limbs, assumed shapes).
+  Dense Newton with newVM's `LinearSolve` (the film's term is a full
+  rank-one matrix). **It is a lone balloon**: real septa have gas on
+  both sides.
+- `asthmacheck.lpr`, all passing (1 s): residual against energy and
+  tangent against residual for wall and alveolus; mesh area and volume;
+  a thick stiffening tethered tube against the exact radial integral;
+  isometric muscle against `m Act T0 ln(Ro/Ri)`; thin-ring buckling into
+  2 and 3 folds against `(n^2-1) E'I/Rm^3` (0.2 %, 0.02 %); first wall
+  contact against the elastica's 5.247 and 0.27 (1.7 %, 2.2 % early: the
+  inner surfaces meet before the centre lines); the sphere against
+  `2(T+gamma)/r`; table interpolation; Poiseuille; a compliant tube's
+  closed form; the wave-speed limit; flow independent of downstream
+  pressure; the lining.
+  - The buckling formula uses the mean radius cubed. `Rm^2 Ri` was 2 %
+    out: suction inside and pressure outside differ by a hydrostatic
+    stress, so the first-order thickness correction must vanish.
+  - The thick tube's uniform state at half its area is unstable (it
+    wrinkles), so that check stops at 0.8.
+  - Volumetric stiffness 1000 `Mu` leaves 0.7 % error in a hard
+    compression; the checks use 20000.
+- `asthmarun.lpr` (3 min, nearly all in `BestLobes`; `--lobes=<n>` skips
+  it): tube laws, alveolar P-V, and the unit's isovolume pressure-flow
+  curve, to `out/*.csv`; `plot_asthma.py` draws `out/unit.png`. Options
+  `--ri`, `--length`, `--act`, `--thick`, `--mucus`, `--out`.
+- **Results** (unloaded lumen radius 0.25 mm, tethered at Ptp 5 cmH2O,
+  asthma = activation 0.3, wall x 1.5, lining x 3):
+  - Lumen area over the unloaded normal area at Ptm -5 / 0 / +5 / +30
+    cmH2O: normal 0.41 / 1.03 / 1.27 / 1.93; tone 0.09 / 0.77 / 0.89 /
+    1.84; thick 0.34 / 1.00 / 1.16 / 1.77; both 0.53 / 0.67 / 0.73 /
+    1.48. All collapse between -3 and -10. "Both" stopped converging at
+    0.40 of the area, so below that its law is the table's exponential
+    tail.
+  - Resistance of 30 000 such bronchioles in parallel at rest: 0.0075
+    cmH2O s/L normal, 0.016 tone, 0.0089 thick, 0.023 both, 0.030 with
+    mucus: four-fold, and still small, as the peripheral airways are.
+  - Starling behaviour: with recoil 5 and the far end at 0, flow stops
+    rising once pleural pressure passes about +2 cmH2O: 5074 mm3/s
+    normal (at the wave speed, 22 m/s), 3784 tone, 3425 both, 2791 with
+    mucus. That is 150 L/s for 30 000, far above any real flow: one
+    terminal bronchiole with the whole recoil across it is a test of the
+    mechanism, not a prediction. The lung's limit will come from the
+    tree.
+  - Alveolus (R 0.1 mm at FRC): deflation limb 6.2 cmH2O at FRC, 30.2 at
+    twice the volume; inflation 10.1 and 30.2; 480 million hold 1.84 L
+    with compliance 0.13 L/cmH2O.
+- **Open after stage 1** (the first two fixed in stage 2):
+  - The balloon under-represented surface forces: saline-filled it was
+    26.5 cmH2O at capacity against 30 air-filled, where a real lung
+    loses about two thirds of its recoil. Stage 2 fits it instead
+    (`FitAlveolus`).
+  - Wall properties weren't fitted to anything. Stage 2 fits the
+    cartilaginous generations to Lambert.
+  - Muscle has no force-velocity or fluidisation; the lining can't
+    reopen; a collapsed lumen's extra viscous loss is left out.
+  - FPC traps hit: a local `fr` beside the field `FR`, and `Rm` beside
+    `rm`, are duplicate identifiers.
+
+#### Stage 2: the lung and chest wall (2026-11-26)
+
+- `uLungModel.pas` (`TLung`, `TLungSim`; header has every equation):
+  - **Tree**: Weibel's symmetric generations 0-16, 2^g airways each,
+    lengths Weibel's. Lumen at full dilation Lambert's (as tabulated by
+    Florens et al., arXiv 2011.09740, table 1), put at the normal wall's
+    area at Ptm 40 cmH2O. The wall's law is scale-free (thicknesses go
+    with the radius), so one FE law serves every generation with the
+    same wall type, scaled.
+  - **Wall types** (`WallM`, modulus scales): generations 0-1 fitted to
+    Lambert's FRC/full area ratio 0.888 (x13.94), generation 2 to 0.711
+    (x3.886), `lungrun --fitwall`; 3-16 the stage-1 membranous wall
+    (0.62). **Lambert's small airways can't be matched**: his ratio falls
+    to 0.15 by generation 16, and no wall here gets below about 0.22
+    (the scan over modulus and stiffening is in the session notes, not
+    the repo). Pinning our lumen at Lambert's FRC size instead made
+    every flow far too small (PEF 6 L/s, FEV1/FVC 58 % for a normal
+    lung), so the lumen is pinned at full dilation, which Lambert and
+    Weibel agree on.
+  - **Lining** on every generation: a film of 5 um (`Film`, times
+    `Mucus` in asthma) on the lumen at FRC; the gas area and the
+    pressure below which it closes (`PClose`) are tabulated per
+    generation at construction.
+  - **Flow**: quasi-steady, the stage-1 equation per generation with the
+    pleural pressure outside, junctions losing the speed-up (none
+    recovered), Rohrer upper airway (K1 0.3, K2 0.05). `Flow` brackets
+    and uses Illinois regula falsi, bisection when the upper end chokes;
+    a choke anywhere is flow limitation and `ChokeGen` says where.
+    Closed at zero flow returns 0 at once (it once made a closed-airway
+    run take over ten minutes).
+  - **Recoil** from `FitAlveolus(30, 10 cmH2O, r 0.126 mm)`: the tissue
+    constant so the saline-filled alveolus holds 10 cmH2O at TLC, then a
+    surface factor (x4.8 on the film's tension) so the air-filled one
+    holds 30. The factor stands in for the septa's and ducts' surface,
+    which a lone sphere lacks. Scaled so the alveoli hold TLC - dead
+    space (6.5 - 0.15 L).
+  - **Chest wall**: relaxed at 4.1 L, 0.2 L/cmH2O in its middle,
+    stiffening exponentially below 1.7 L and above 7 L (assumed; the low
+    end sets RV near 1.5 L under full expiratory effort).
+  - `TLungSim`: Heun's method on volume; Ppl = Pcw - Pmus, Palv = Ppl +
+    Pel; each state's flow solved for.
+  - `BuildWallLaws` builds the three wall types' tube laws in threads
+    (about 3 s); `WallRing` applies the asthma.
+- `lungcheck.lpr`, all passing (7 s): a near-rigid tree's resistance
+  against the Poiseuille sum (1e-4, at 1e-5 cmH2O: at 1e-3 the
+  junctions' quadratic speed-up losses add 1 %); the fitted alveolus
+  (30 and 10 cmH2O at TLC); passive emptying against exp(-t/RC) (3e-4,
+  from 5 uL above FRC, again to stay linear); the flow solver inverting
+  the expiratory and inspiratory marches; isovolume flow independent of
+  pleural pressure once limited.
+- `lungrun.lpr` (80 s for the four cases): for each, FRC, resistance,
+  where the linings close; forced expiration from TLC (effort 40-160
+  cmH2O by volume, 30 ms rise): PEF, FEV1, FVC, RV, MEF50 at full and
+  60 % effort, choke generation; tidal breathing at rest (15 /min,
+  500 mL) and fast (30 /min, 600 mL), I:E 1:2, Pmus a half sine then
+  post-inspiratory decay, peak Pmus adjusted until the breath repeats:
+  EELV against FRC, intrinsic PEEP, pleural pressures, peak flows,
+  fraction of expiration flow-limited, inspiratory work split elastic /
+  resistive. `--act/--thick/--mucus` add a custom case, `--only=<name>`,
+  `--dt`, `--fitwall`. CSVs to `out/`; `plot_lung.py` draws
+  `out/lung.png`.
+- **Results**. Asthma grades are assumed: mild activation 0.15, wall
+  x1.25; moderate 0.3, x1.5, lining x1.5; severe 0.5, x1.75, lining x2.
+
+  | | normal | mild | moderate | severe |
+  |---|---|---|---|---|
+  | Raw at FRC, cmH2O s/L | 0.68 | 0.94 | 1.43 | 2.23 |
+  | PEF, L/s | 8.06 | 7.48 | 5.95 | 3.87 |
+  | FEV1, L | 4.55 | 4.15 | 3.55 | 2.94 |
+  | FEV1/FVC | 91 % | 83 % | 71 % | 59 % |
+  | MEF50, L/s | 5.22 | 4.12 | 3.04 | 2.46 |
+  | fast breathing: peak Pmus, cmH2O | 6.8 | 7.1 | 8.1 | 10.3 |
+  | fast: lowest Ppl, cmH2O | -9.3 | -9.7 | -10.8 | -13.0 |
+  | fast: EELV above FRC, mL | 0 | 0 | 2 | 21 |
+  | fast: work, J/min (resistive J/breath) | 7.8 (0.07) | 8.5 (0.10) | 10.2 (0.15) | 13.5 (0.25) |
+
+  At rest: FRC 3.01 L everywhere, Ptp there 5.4 cmH2O, work 0.30 J/L
+  normal (0.39 severe), no flow limitation and no intrinsic PEEP in any
+  grade. FVC is 5.02 L and RV 1.48 L in all four: RV is set by the chest
+  wall. MEF50 at 60 % effort is within 3 % of full effort: the forced
+  flows are limited, choking in generations 0-2 (the trachea and main
+  bronchi, wave speed), as Lambert found.
+- **What it shows, and doesn't**:
+  - Up to "severe" the asthma is an obstructive spirometry pattern with
+    the work and pleural swings it costs, but **no dynamic hyperinflation
+    or tidal flow limitation**: tidal flows stay well under the maximal
+    flows, because a symmetric tree narrows everywhere at once and its
+    central airways still limit. Real hyperinflation in asthma needs
+    either far more obstruction or the heterogeneity of stage 3 (some
+    units nearly shut, with long time constants, while others carry
+    the flow).
+  - FVC and RV don't change with these grades, against the gas
+    trapping of real asthma: RV is the chest wall's here, unless the
+    linings close first (the extreme case below).
+  - The normal FEV1/FVC (91 %) is high and its MEFV curve straight;
+    Lambert's more distensible small airways would lower and scoop it.
+  - The chest wall, upper airway, effort curve and asthma grades are
+    assumed round values.
+  - Expiration is quasi-steady: no gas inertance or compressibility, so
+    the PEF transient is not modelled.
+- **An extreme case** (`--act=0.7 --thick=2 --mucus=2`, 20 s): the
+  linings now close generations 15 and 16 at positive transmural
+  pressure (+1.5 and +13 cmH2O), so at FRC the small airways are shut
+  and airway resistance is infinite. Forced expiration stops at 2.26 L
+  exhaled, RV 4.24 L (FEV1 2.24 L, PEF 2.7 L/s). Breathing settles at
+  EELV 4.24 L, 1.2 L above FRC, with intrinsic PEEP 13.7 cmH2O, pleural
+  pressure +0.7 at end expiration and -20 (rest) to -28 (fast) at its
+  lowest, about 40 % of expiration flow-limited, and inspiratory work
+  15 J/min at rest and 47 fast (normal 2.3 and 7.8). EELV equals that
+  RV: **the hyperinflation is closure trapping** (expiration stops when
+  the linings shut, and inspiration must first lift the trapped
+  pressure), not a time constant too long for the breath. With no
+  closure hysteresis the airways reopen as soon as Ptm passes `PClose`.
+- **The tidal controller** brackets Pmax and uses the secant inside the
+  bracket. A plain `Pmax (VT target / VT)^0.8` update oscillated
+  between 205 and 1217 mL in the extreme case, where VT is very steep in
+  Pmax once the trapped pressure is overcome. The bracket is reset every
+  10 breaths in case EELV is still moving; 60 cmH2O is the muscles' cap,
+  and `--verbose` prints every breath.
 
 ## demos/
 
