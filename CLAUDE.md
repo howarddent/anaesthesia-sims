@@ -1961,6 +1961,88 @@ gases in `absorbrun` after every breath (columns `PaO2_mmHg`,
   These were run in parallel with `--only` (each writes
   `out/treat_<run>.csv`) and joined into `out/treat.csv`.
 
+#### Stage 9: the spontaneously breathing asthmatic (2026-11-26)
+
+`spontrun.lpr` (its header has the protocol and every assumption),
+`plot_spont.py` (`out/spont.png`), `out/spont.csv`, which joins each
+run's `out/spont_<run>_sum.csv`. There is also a row per breath in
+`out/spont_<run>.csv`.
+
+- **The patient**: the emergency department before intubation. It has
+  stage 8's lung (tone 0.8, wall x 3, closure hysteresis) with the
+  natural upper airway (K1 0.3, K2 0.05).
+- **Breathing**: the inspiratory muscles give a half-sine pressure at
+  25 /min with Ti/Ttot 0.35, and expiration is passive. The drive is
+  adjusted breath by breath towards 500 mL tidal volume (12.5 L/min),
+  capped at 50 cmH2O. That's 60 breaths, averaged over the last 10.
+- **Measured**:
+  - work (Pmus dV over inspiration);
+  - pleural swing, the cause of pulsus paradoxus;
+  - intrinsic PEEP: mean alveolar pressure of the open units above the
+    airway pressure at end expiration;
+  - end-expiratory volume above FRC, and above the relaxed volume at
+    the CPAP, i.e. the dynamic part (`StaticState(CPAP)`, since a muscle
+    pressure and an airway pressure give the same transpulmonary
+    pressure);
+  - the tension-time index `TTI = (2/pi Pmus,peak / Pimax) Ti/Ttot`,
+    with Pimax 100 cmH2O at FRC falling linearly to 0 at TLC (assumed;
+    fatigue above 0.15);
+  - stage 7's blood gases with HPV, with VO2 300 and VCO2 240 for the
+    work of breathing.
+- **Results** (FiO2 0.3 except the first two; every case reached 500 mL
+  within the cap):
+
+  | case | Pmus peak | work (J/min) | EEV above FRC (dynamic) mL | PEEPi | pleural swing | TTI | shut all breath | shunt | PaO2 | PaCO2 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | normal, air | 5.4 | 4.1 | 0 (0) | 0 | 2.9 | 0.012 | 0 | 0 | 120 | 24 |
+  | asthma, air | 25.7 | 26.3 | 460 (460) | 4.7 | 23.5 | 0.066 | 60 | 13 % | 72 | 25 |
+  | asthma | 25.7 | 26.3 | 460 (460) | 4.7 | 23.5 | 0.066 | 60 | 13 % | 85 | 26 |
+  | salbutamol (tone 0.6) | 12.8 | 12.3 | 126 (126) | 1.3 | 10.6 | 0.030 | 5 | 1 % | 167 | 24 |
+  | heliox 70:30 | 22.5 | 23.2 | 418 (418) | 3.7 | 20.4 | 0.057 | 62 | 13 % | 83 | 26 |
+  | CPAP 5 | 21.7 | 21.7 | 700 (227) | 3.6 | 19.5 | 0.060 | 53 | 12 % | 90 | 25 |
+  | CPAP 10 | 18.9 | 18.6 | 1033 (117) | 2.6 | 16.7 | 0.060 | 40 | 10 % | 99 | 24 |
+  | salbutamol + heliox | 11.0 | 10.5 | 95 (95) | 1.0 | 8.8 | 0.025 | 5 | 1 % | 167 | 24 |
+  | salbutamol + CPAP 5 | 11.7 | 11.0 | 546 (73) | 0.9 | 9.6 | 0.031 | 5 | 1 % | 167 | 24 |
+
+  Pressures in cmH2O, gases in mmHg. PaCO2 is low throughout because
+  the drive holds 12.5 L/min.
+- **What it shows**:
+  - **The asthmatic does 6 times the normal work** for the same
+    ventilation. The pleural swing is 23.5 cmH2O against 2.9 normal,
+    which is in the range where pulsus paradoxus exceeds 10-15 mmHg.
+    It also carries 4.7 cmH2O of intrinsic PEEP that must be overcome
+    before any gas moves, and it breathes 460 mL above FRC.
+  - **The hypoxaemia is shunt, with normal or low PaCO2**: 60 units
+    shut through the whole breath, PaO2 72 on air. This is the classic
+    early acute asthma blood gas, and a normal PaCO2 here would be a
+    warning sign.
+  - **Salbutamol halves the work and the swing** and reopens nearly
+    every unit, the threshold of stage 8 again.
+  - **Heliox alone helps a little** (work -12 %), and adds a little on
+    top of salbutamol.
+  - **CPAP trades dynamic hyperinflation for applied volume.**
+    CPAP 10 takes the dynamic part from 460 to 117 mL and offsets
+    intrinsic PEEP, so the muscle pressure and work fall by 28 %. It
+    also opens 20 units (shunt 13 to 10 %). But the total volume rises
+    to 1 L above FRC, so the shortened muscles are weaker, and the
+    tension-time index doesn't improve (0.066 to 0.060). That is the
+    argument over NIV in asthma: it unloads the muscles against
+    intrinsic PEEP, at the cost of more lung volume.
+  - **No case is near fatigue on TTI** (0.066 against 0.15). The
+    muscles cope at this ventilation; the stress shows in the work,
+    the swing and the shunt.
+- **Limits**:
+  - The breathing pattern (rate, Ti/Ttot, target VT) is fixed, not
+    chemically controlled. A real patient would raise ventilation with
+    hypoxaemia and anxiety, and TTI with it.
+  - Expiratory muscles are not modelled.
+  - The Pimax-volume line and the salbutamol tone are assumed.
+  - There is no circulation, so the pulsus is inferred from the swing,
+    not computed.
+- Options: `--only`, `--salb` (0.6), `--pmax` (50), `--breaths` (60),
+  `--dt`, `--out`. About a minute a case. The nine cases were run in
+  parallel with `--only`.
+
 ## demos/
 
 Each is a standalone Lazarus project (own `.lpi`/`.lpr`/form unit/`.lfm`), built against newVM in the submodule.
