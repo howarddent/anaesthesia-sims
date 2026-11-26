@@ -21,6 +21,12 @@ program patchycheck;
      and out, in a patchy lung; and in the normal lung, with gravity,
      the plateau after a 3 s end-inspiratory hold equals the static
      pressure holding that volume (StaticState's muscle pressure).
+  6. Closure hysteresis (stage 6): a unit marked Shut whose alveolar
+     transmural pressure lies between its closing pressure and its
+     opening pressure carries no flow, though it flows when not marked;
+     UpdateClosure keeps it shut there and opens it once the pressure
+     passes the opening pressure; and a flowing unit that hits its
+     closing pressure is marked Shut.
 
   Build:  fpc -O3 -FUlib -Fu../../../newVM -Fi../../../newVM patchycheck.lpr }
 
@@ -212,6 +218,42 @@ begin
   finally
     Free;
   end;
+  L.Free;
+
+  Writeln('6. Closure hysteresis');
+  PP := DefaultPatchyParams;
+  PP.Sigma := 0; PP.Gravity := 0; PP.ActMode := True; PP.DS := 0.05; PP.SMax := 0.9;
+  A.Act := 0.3; A.Thick := 1.75; A.Mucus := 2;
+  L := TPatchyLung.Create(Prm, PP, A, Alv, RefLaws);
+  SetLength(V, L.NU);
+  L.StaticState(0, V);
+  u := 7;
+  L.Level[u] := 15;   { activation 0.75: shut below about +8 cmH2O }
+  L.Hysteresis := 1;
+  Writeln(Format('  level 15: closes at %.2f cmH2O, opens %.2f above', [L.Tables[15].PClose / CmH2O,
+    L.Tables[15].PReopen / CmH2O]));
+  ppl := -6 * CmH2O;
+  V[u] := L.UnitVolume(L.Tables[15].PClose + 0.5 * L.Tables[15].PReopen);
+  L.Shut[u] := True;
+  L.Solve(V, ppl);
+  Check('marked shut, between closing and opening: flow, mL/s', L.Qu[u] / 1000, 0, 0);
+  L.UpdateClosure;
+  if not L.Shut[u] then begin Writeln('  FAIL: reopened below the opening pressure'); Inc(Fails); end;
+  L.Shut[u] := False;
+  L.Solve(V, ppl);
+  Writeln(Format('  not marked: flow %.3f mL/s', [L.Qu[u] / 1000]));
+  if L.Qu[u] <= 0 then begin Writeln('  FAIL: the open unit does not empty'); Inc(Fails); end;
+  L.Shut[u] := True;
+  V[u] := L.UnitVolume(L.Tables[15].PClose + 1.2 * L.Tables[15].PReopen);
+  L.Solve(V, ppl);
+  L.UpdateClosure;
+  if L.Shut[u] then begin Writeln('  FAIL: still shut above the opening pressure'); Inc(Fails); end
+  else Writeln('  reopened above the opening pressure: ok');
+  V[u] := L.UnitVolume(L.Tables[15].PClose - 0.5 * CmH2O);
+  L.Solve(V, ppl);
+  L.UpdateClosure;
+  if not L.Shut[u] then begin Writeln('  FAIL: not marked shut below the closing pressure'); Inc(Fails); end
+  else Writeln('  marked shut below the closing pressure: ok');
   L.Free;
   for i := 0 to NWall - 1 do RefLaws[i].Free;
 

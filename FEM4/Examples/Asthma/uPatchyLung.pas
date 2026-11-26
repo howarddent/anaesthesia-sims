@@ -68,6 +68,10 @@ type
   public
     S: Double;                       { severity }
     PClose: Double;                  { kPa: the subtree closes at or below this transmural pressure }
+    { kPa: 2 gamma / r of the airway that closes first, r its gas radius
+      just above PClose: the extra pressure to push the liquid bridge
+      back out (Hysteresis) }
+    PReopen: Double;
     QmaxE, QmaxI: array of Double;   { lung-equivalent, mm3/s }
     DE, DI: array of Double;         { [i * NX + j], kPa }
     constructor Create(L: TLung; K: Integer);
@@ -117,10 +121,20 @@ type
     { pressure at the airway opening (kPa, against atmosphere) that Solve
       works to: 0 breathing, the ventilator's when ventilated }
     Pao: Double;
+    { closure hysteresis (stage 6), off unless Hysteresis is set: a unit
+      whose airways have shut (its flow 0 at a closing pressure) stays
+      Shut until the transmural pressure at either end of it reaches
+      PClose + Hysteresis * PReopen + ExtraOpen[u]. UpdateClosure,
+      called after each step, moves units in and out. }
+    Hysteresis: Double;
+    Shut: array of Boolean;
+    ExtraOpen: array of Double;   { kPa, e.g. for a collapsed unit }
     Notes: string;
     constructor Create(const AP: TLungParams; const APP: TPatchyParams; const AA: TAsthma;
       const Alv: TAlveolusParams; const RefLaws: array of TTubeLaw);
     destructor Destroy; override;
+    function OpenPressure(u: Integer): Double;
+    procedure UpdateClosure;
     function SevAsthma(s: Double): TAsthma;
     function LevelAsthma(j: Integer): TAsthma;
     function LevelCount: Integer;
@@ -187,7 +201,7 @@ end;
 
 constructor TUnitTable.Create(L: TLung; K: Integer);
 var
-  i, j, g: Integer;
+  i, j, g, gc: Integer;
   pt, lo, hi, mid, p: Double;
   ch: Boolean;
 
@@ -214,8 +228,12 @@ var
 
 begin
   inherited Create;
-  PClose := -Infinity;
-  for g := K to NGen - 1 do PClose := Max(PClose, L.Gens[g].PClose);
+  PClose := -Infinity; gc := -1;
+  for g := K to NGen - 1 do
+    if L.Gens[g].PClose > PClose then begin PClose := L.Gens[g].PClose; gc := g; end;
+  PReopen := 0;
+  if (gc >= 0) and not IsInfinite(PClose) then
+    PReopen := 2 * L.Prm.Gamma / Sqrt(L.Gens[gc].Gas.Area(PClose + 0.25 * CmH2O) / Pi);
   SetLength(QmaxE, NPt); SetLength(QmaxI, NPt);
   SetLength(DE, NPt * NX); SetLength(DI, NPt * NX);
   for i := 0 to NPt - 1 do
@@ -351,6 +369,8 @@ begin
   SetLength(Level, NU); SetLength(Sev, NU); SetLength(PX, NU); SetLength(PY, NU);
   SetLength(DPpl, NU); SetLength(Pu, NU); SetLength(PplU, NU); SetLength(Qu, NU);
   SetLength(LimU, NU); SetLength(FWork, NU);
+  SetLength(Shut, NU); SetLength(ExtraOpen, NU);
+  Hysteresis := 0;
   { the severity cascade }
   RandSeed := PP.Seed;
   SetLength(xi, PP.K + 1);
@@ -494,6 +514,11 @@ var
   T: TUnitTable;
 begin
   T := Tables[Level[u]];
+  if (Hysteresis > 0) and Shut[u] and (Max(Pu, Pc) - PplU < OpenPressure(u)) then
+  begin
+    Lim := True;
+    Exit(0);
+  end;
   if Pu > Pc then Result := T.FlowOut(Pu - PplU, Pc - PplU, Lim) / NU
   else if Pu < Pc then Result := -T.FlowIn(Pc - PplU, Pu - PplU, Lim) / NU
   else
@@ -501,6 +526,28 @@ begin
     Lim := Pu - PplU <= T.PClose;
     Result := 0;
   end;
+end;
+
+function TPatchyLung.OpenPressure(u: Integer): Double;
+var
+  T: TUnitTable;
+begin
+  T := Tables[Level[u]];
+  if IsInfinite(T.PClose) then Result := T.PClose
+  else Result := T.PClose + Hysteresis * T.PReopen + ExtraOpen[u];
+end;
+
+procedure TPatchyLung.UpdateClosure;
+var
+  u: Integer;
+begin
+  if Hysteresis <= 0 then Exit;
+  for u := 0 to NU - 1 do
+    if Shut[u] then
+    begin
+      if Max(Pu[u], Pc) - PplU[u] >= OpenPressure(u) then Shut[u] := False;
+    end
+    else if LimU[u] and (Qu[u] = 0) then Shut[u] := True;
 end;
 
 { F(Pc): rises with Pc; Choked when the trunk can't carry the units' flow }
@@ -704,6 +751,11 @@ begin
   for u := 0 to Lung.NU - 1 do
     V[u] := v0[u] - 0.5 * Dt * (q1[u] + Lung.Qu[u]) / LitreMM3;
   Evaluate;
+  if Lung.Hysteresis > 0 then
+  begin
+    Lung.UpdateClosure;
+    Evaluate;
+  end;
 end;
 
 end.

@@ -1747,6 +1747,85 @@ Rev Respir Dis 1987).
   (a row per setting) and `out/vent_<lung>_<n>.csv` (the measured
   breath, holds and apnoea). About 15 minutes for all three lungs.
 
+#### Stage 6: closure hysteresis and absorption atelectasis (2026-11-26)
+
+`absorbrun.lpr` (its header has the model), `plot_absorb.py`
+(`out/absorb.png`), check 6 in `patchycheck`.
+
+- **Hysteresis** (`uPatchyLung`): `TUnitTable.PReopen` is 2 gamma / r
+  for the airway that closes first, r its gas radius just above
+  `PClose`: the pressure to push the liquid bridge back out (about
+  6 cmH2O in the status asthmaticus lung). With `Hysteresis` > 0 a unit
+  whose flow has stopped at a closing pressure is `Shut` and carries
+  nothing until the transmural pressure at either end reaches
+  `PClose + Hysteresis * PReopen + ExtraOpen[u]`. `UpdateClosure`
+  runs after every step. Off by default, so stages 3-5 are unchanged.
+- **Gas** (`absorbrun`):
+  - Each unit carries an oxygen fraction; gas flowing in has the
+    alveolar fraction of the inspired gas, `0.938 FiO2 - 0.05`.
+  - Behind shut airways oxygen is absorbed with time constant 90 s and
+    the rest (mostly nitrogen) with 3 h. Both are assumed: an
+    obstructed unit on oxygen collapses within minutes, one on air over
+    hours. This applies only to units shut at that moment; units that
+    reopen each inspiration are refilled.
+  - Below 40 % of its relaxed FRC volume a unit has **collapsed**. It
+    needs 20 cmH2O transmural to reopen (assumed; recruitment studies
+    put alveolar opening at 20-40).
+  - Perfusion goes with FRC volume times 1 + 2 y/H, three times as
+    much at the bottom as at the top (assumed linear). Reported: the
+    share to units shut all breath that still hold gas (unventilated,
+    still oxygenating), and to collapsed units (true shunt).
+- **Protocol**: the stage-5 status asthmaticus lung, 500 mL at 12 /min,
+  60 L/min, PEEP 0, for 20 min, then a recruitment manoeuvre (CPAP
+  35 cmH2O, 30 s) and 3 min more. About 6 min a run; the four runs
+  were run in parallel.
+- **Results**:
+
+  | run | at 20 min: EEV (mL) | collapsed units (perfusion) | shut, gas left (perfusion) | 3 min after recruitment: EEV | collapsed (perfusion) | shut, gas left (perfusion) |
+  |---|---|---|---|---|---|---|
+  | asthma, FiO2 1.0 | -86 | 60 (24.3 %) | 0 | +204 | 25 (9.1 %) | 8 (3.9 %) |
+  | asthma, FiO2 0.4 | +83 | 0 | 58 (23.8 %) | +507 | 0 | 33 (12.9 %) |
+  | asthma, FiO2 1.0, no hysteresis | +230 | 22 (10.6 %) | 0 | +379 | 0 | 2 (1.0 %) |
+  | normal, FiO2 1.0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+- **What it shows**:
+  - **Absorption atelectasis on oxygen**: at FiO2 1.0, the 60 units
+    that stay shut through the breath (a quarter of the perfusion, the
+    dependent lung) collapse within 2 minutes. End-expiratory volume
+    falls below FRC, so the hyperinflation is traded for shunt.
+  - **At FiO2 0.4** the same units stay shut but don't collapse: their
+    oxygen is gone within about 8 minutes, and the nitrogen left holds
+    them open. They are still unventilated, so on the model's terms
+    they are still a shunt until the nitrogen goes, hours later.
+  - **Recruitment reopens everything, and the oxygen run loses it
+    again**: 25 of the 60 units collapse again within 3 minutes. This
+    is Rothen's finding in anaesthetised patients (atelectasis back
+    within minutes after recruitment on 100 % oxygen, absent for 40 min
+    on 40 %).
+  - **On 40 % recruitment worsens hyperinflation**: the units that shut
+    again trap the manoeuvre's gas (EEV +83 to +507 mL), since there is
+    no fast-absorbing oxygen to let it go.
+  - **Hysteresis matters**: without it a shut unit reopens as soon as
+    inspiration lifts its pressure past `PClose`. Only 22 units collapse
+    then, and trapped gas creeps up instead (+230 mL at 20 min).
+  - The normal lung never shuts anything.
+- **Limits**:
+  - The absorption time constants, collapse volume, 20 cmH2O opening
+    pressure and the perfusion gradient are assumed.
+  - Open units take up no oxygen (their composition is set by
+    ventilation alone), and there is no blood-gas calculation (PaO2),
+    only perfusion shares.
+  - A collapsed unit's volume is held at 40 % of FRC, not taken lower.
+  - Reopening is all at once for a unit, with no sequential recruitment
+    down its subtree.
+- **Checks**: `patchycheck` 6. A unit marked shut between its closing
+  and opening pressures carries nothing; unmarked, it empties.
+  `UpdateClosure` keeps it shut there, opens it above the opening
+  pressure, and marks a unit shut below its closing pressure.
+- Options: `--only`, `--minutes`, `--fio2`/`--hyst` (custom run),
+  `--tauo2`, `--taun2`, `--rm`, `--dt`, `--out`. Files:
+  `out/absorb_<run>.csv`, a row per breath.
+
 ## demos/
 
 Each is a standalone Lazarus project (own `.lpi`/`.lpr`/form unit/`.lfm`), built against newVM in the submodule.
