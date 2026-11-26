@@ -1861,13 +1861,105 @@ gases in `absorbrun` after every breath (columns `PaO2_mmHg`,
   - Severinghaus gives P50 26.8 (to 0.3 %);
   - V/Q mismatch alone (0.2 and 1.4) drops PaO2 from 96 to 52 mmHg and
     raises PaCO2, and FiO2 0.4 brings PaO2 back to 134.
-- **Early results** (first minutes; the full 23-minute runs to follow):
-  - normal lung: PaO2 97 on air, 661 on oxygen, PaCO2 41;
-  - asthma on air: PaO2 66 (SaO2 0.93) with 14 % shunt;
-  - asthma on 40 %: PaO2 98 (P/F 246);
-  - asthma on oxygen, once the shut units have collapsed: PaO2 354 with
-    HPV (15 % shunt), 161 without (24 %);
-  - asthma on oxygen without hysteresis: PaO2 510 (2 % shunt).
+- **Results**: PaO2 / PaCO2 in mmHg, with the shunt after HPV in
+  brackets, at the first breath, at 20 min, and 3 min after the
+  recruitment manoeuvre.
+
+  | run | first breath | 20 min | after recruitment |
+  |---|---|---|---|
+  | normal, air | 97 / 41 (0) | 97 / 41 (0) | 97 / 41 (0) |
+  | normal, FiO2 1.0 | 661 / 41 (0) | 661 / 41 (0) | 661 / 41 (0) |
+  | asthma, air | 66 / 43 (15 %) | 67 / 44 (14 %) | 67 / 44 (8 %) |
+  | asthma, FiO2 0.4 | 95 / 44 (14 %) | 100 / 44 (13 %) | 110 / 44 (7 %) |
+  | asthma, FiO2 1.0 | 354 / 44 (15 %) | 369 / 44 (14 %) | 456 / 44 (8 %) |
+  | asthma, FiO2 1.0, no HPV | 145 / 45 (25 %) | 161 / 45 (24 %) | 327 / 45 (13 %) |
+  | asthma, FiO2 1.0, no hysteresis | 510 / 44 (2 %) | 507 / 44 (6 %) | 512 / 44 (1 %) |
+
+- **What it shows**:
+  - **Asthma on air is hypoxaemic, not hypercapnic.** It has PaO2 66
+    (SaO2 0.93) from the ~60 units shut all breath, and PaCO2 is only 2-3
+    above normal, because the open units' extra ventilation clears CO2
+    but can't add oxygen to shunted blood.
+  - **Oxygen lifts PaO2 but leaves P/F low.** P/F is 239-369 against
+    463-661 normal; this is the signature of shunt, not V/Q mismatch.
+  - **Absorption atelectasis changes the mechanics more than the gases
+    here**: shut-all-breath units are already shunt in the steady-state
+    model, so their collapse on oxygen moves them from "unventilated" to
+    "collapsed" without changing PaO2. The real cost of the collapse is
+    that recruitment is lost again (stage 6).
+  - **HPV is worth more than half the PaO2 on oxygen**: 369 against 161
+    mmHg at 20 min, by cutting the shunt from 24 % to 14 %. Anything
+    that blunts HPV (vasodilators, beta-agonists in some reports,
+    volatile anaesthetics) would cost oxygenation.
+  - **Recruitment halves the shunt in every asthma run**, and on oxygen
+    PaO2 rises to 456 even while 25 units are collapsing again.
+  - **Without hysteresis** shut units reopen every inspiration and are
+    ventilated, so the shunt is only 1-6 % and PaO2 about 510. Whether
+    small airways reopen readily is therefore what decides the
+    oxygenation in this model.
+
+#### Stage 8: treating the ventilated asthmatic (2026-11-26)
+
+`treatrun.lpr` (its header has the protocol), `plot_treat.py`
+(`out/treat.png`), `out/treat.csv`.
+
+- **The setup**: stage 5's status asthmaticus lung with stage 6's
+  closure hysteresis, on 500 mL with a 60 L/min square wave, PEEP 0 and
+  FiO2 0.3. Each case runs to a steady end-expiratory volume, then one
+  measured breath with holds. Blood gases are from stage 7, with HPV
+  and no absorption.
+- **Treatments**:
+  - salbutamol: tone 0.8 down to 0.4, with a dose sweep at 0.7, 0.6
+    and 0.5;
+  - heliox 70:30: `Rho` x 0.46 and `Visc` x 1.09 in every generation's
+    pressure drop and wave-speed choke, and in the tube (K1 with
+    viscosity, K2 with density);
+  - salbutamol and heliox together;
+  - rate 8 /min, on its own and with both drugs.
+- **Results**, with the normal lung first:
+
+  | run | peak | plateau | trapped above FRC (mL) | units shut all breath | shunt | PaO2 | PaCO2 |
+  |---|---|---|---|---|---|---|---|
+  | normal | 11.2 | 5.3 | 0 | 0 | 0 | 162 | 41 |
+  | normal, heliox | 8.8 | 5.3 | 0 | 0 | 0 | 162 | 41 |
+  | asthma (tone 0.8) | 31.3 | 10.1 | 295 | 58 | 13.4 % | 84 | 40 |
+  | tone 0.7 | 24.1 | 6.1 | 19 | 35 | 8.5 % | 100 | 41 |
+  | tone 0.6 | 20.1 | 5.4 | 2 | 5 | 1.2 % | 151 | 39 |
+  | tone 0.5 | 17.9 | 5.3 | 0 | 0 | 0 | 163 | 40 |
+  | salbutamol (0.4) | 17.8 | 5.3 | 0 | 0 | 0 | 163 | 40 |
+  | heliox | 25.4 | 10.1 | 292 | 62 | 14.1 % | 81 | 41 |
+  | salbutamol + heliox | 13.7 | 5.3 | 0 | 0 | 0 | 163 | 40 |
+  | rate 8 | 31.2 | 10.0 | 286 | 60 | 13.9 % | 77 | 59 |
+  | salbutamol + heliox, rate 8 | 13.7 | 5.3 | 0 | 0 | 0 | 137 | 60 |
+
+  Pressures are in cmH2O, gases in mmHg, and shunt is a share of the
+  cardiac output.
+- **What it shows**:
+  - **Salbutamol works through a threshold.** The closure comes from
+    tone pushing the closing pressure above the units' end-expiratory
+    transmural pressure. A modest fall in tone (0.8 to 0.6) drops the
+    closing pressure below it, and nearly all the trapping, shunt and
+    raised plateau go. A larger fall only lowers the peak further
+    (resistance in the open airways).
+  - **Heliox lowers the peak, not the plateau.** The peak falls 6 cmH2O
+    (resistance and the tube), but it doesn't touch closure, so trapped
+    gas, shunt and PaO2 are unchanged. Added to salbutamol it takes
+    another 4 cmH2O off the peak. This matches heliox's equivocal
+    trials: it helps flow-limited, density-dependent obstruction, while
+    this lung's gas trapping is closure.
+  - **A slower rate doesn't help here.** Trapping is by closure, not by
+    long time constants, so a longer expiration doesn't empty the shut
+    units (286 against 295 mL), and halving ventilation raises PaCO2 to
+    59 (permissive hypercapnia). This differs from stage 5, which had no
+    hysteresis: there, shut units reopened each inspiration and were
+    pumped up, so EEV fell with minute ventilation.
+- **Limits**: the tone reduction for salbutamol is assumed, not a
+  dose-response from data. Heliox's FiO2 cap (30 %) is the same as the
+  baseline's, so oxygen isn't confounded. The thickened wall and mucus
+  are untreated (steroids work over hours, not modelled).
+- Options: `--only`, `--salb`, `--dt`, `--out`. A run takes 15-60 s.
+  These were run in parallel with `--only` (each writes
+  `out/treat_<run>.csv`) and joined into `out/treat.csv`.
 
 ## demos/
 
