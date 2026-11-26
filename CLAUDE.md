@@ -1572,6 +1572,85 @@ ventilation maps). Same build line.
   place, severity, volumes and ventilation), `_fv.csv`, `_rest.csv`,
   `_fast.csv`.
 
+#### Stage 4: airway tone that answers to stretch (2026-11-26)
+
+`tonerun.lpr` (its header has the model), `plot_tone.py`
+(`out/tone.png`), check 4 in `patchycheck`. `uPatchyLung` gained
+`ActMode`. Its levels are then muscle activations 0, 0.05, .. 0.9, every
+unit has the case's thickening and lining, all levels are built, and a
+unit's `Level` may change between steps.
+
+- **Model** (Venegas et al., Nature 2005, built on Fredberg's perturbed
+  equilibrium: smooth muscle stretched every breath develops less force
+  than muscle held still). After every breath each unit's activation
+  relaxes (time constant 20 s) towards
+  `Act0 Sev_u (1 - Fmax e^2/(e^2 + e50^2))`, e being the unit's tidal
+  volume strain, which stands for its airways' stretch through
+  tethering. Fmax 0.75 and e50 0.1 are assumed; a normal unit's e in
+  fast breathing is about 0.2. Sev_u is a clustered spread of sigma
+  0.1, and gravity is as in stage 3. A poorly ventilated unit stretches
+  less, contracts more and narrows further. The protocol is fast
+  breathing (30 /min, drive adjusted towards 600 mL), with dose Act0
+  either raised 0.3 .. 0.9 over 40 breaths each (gradual) or given as
+  0.9 at once (sudden). The feedback is on, or off (Fmax 0: tone
+  ignores stretch).
+- **What the FE wall allows** (found while building this): muscle
+  alone narrows the membranous airways only to about 0.3 of their full
+  area, because the folded mucosa fills the lumen (Wiggs and Lambert's
+  folding limit). At full activation the units' conductance is about a
+  quarter of normal and nothing closes with a normal wall and lining.
+  With the severe wall (x 1.75) and lining (x 2), the lining closes the
+  airways from about activation 0.65. Because the floor lies almost at
+  the lining's closing area, the closing pressure jumps between
+  neighbouring levels (0.75 shuts at +8 cmH2O, 0.8 at +4).
+- **Results** (fast breathing, last breath of the final dose):
+
+  | | EELV above FRC (mL) | PEEPi (cmH2O) | work (J/min) | defects (% of lung) | units shut / trapped | mean activation |
+  |---|---|---|---|---|---|---|
+  | moderate, off, gradual | 17 | 0.2 | 12.0 | 0 | 0 / 0 | 0.87 |
+  | moderate, on, gradual | 3 | 0 | 10.3 | 0 | 0 / 0 | 0.34 |
+  | severe, off, gradual | 545 | 6.3 | 24.2 | 34 | 0 / 169 | 0.87 |
+  | severe, on, gradual | 7 | 0.1 | 11.2 | 0 | 0 / 0 | 0.34 |
+  | severe, off, sudden | 565 | 6.5 | 28.8 | 35 | 0 / 173 | 0.88 |
+  | severe, on, sudden | 41 | 0.4 | 16.3 | 22 | 59 / 9 | 0.45 |
+  | severe, on, sudden, deep breaths | 108 | 1.3 | 16.0 | 20 | 32 / 44 | 0.42 |
+
+  "Trapped" means end-expiratory volume more than 10 % above its FRC
+  volume; normal fast breathing costs 7.8 J/min.
+- **What it shows**:
+  - **Dynamic hyperinflation at last**, and the kind a time constant
+    gives rather than closure trapping: with tone that ignores stretch,
+    the severe wall at activation 0.9 holds end expiration 545 mL above
+    FRC with intrinsic PEEP 6.3 cmH2O. Two thirds of the units are
+    trapped and none is shut all breath, and the work is three times
+    normal. In stages 2 and 3 only closure produced this.
+  - **Stretch-responsive muscle protects**: with the feedback on, tidal
+    breathing holds activation at about 0.4 of the dose and a gradual
+    challenge never closes anything. This is the bronchoprotection of
+    breathing that Fredberg argued asthmatic muscle loses, so "off" can
+    be read as the asthmatic muscle and "on" as the normal one.
+  - **Bistability, so history matters**: a sudden full dose shuts 59
+    units before stretch can act. A shut unit gets no stretch and stays
+    shut, while the rest relax, leaving 22 % of the lung as clustered
+    defects that are stable for 120 breaths. The same dose given
+    gradually gives none. The shut units gather in the dependent lung.
+  - **Deep breaths** (one per 40 breaths, 30 cmH2O, about 1.2 L)
+    reopen every unit, and about half stay open (59 to 32 shut). The
+    ones that close again shut on the deep breath's gas, so trapping
+    rises (EELV +41 to +108 mL).
+- **Limits**: one feedback law with assumed constants; stretch taken
+  from the unit's volume strain, not the airway's own; activation
+  quantised to 0.05; the folding floor caps narrowing; the trunk's tone
+  is fixed at the case's 0.3.
+- **Checks**: `patchycheck` 4: in activation mode with no spread or
+  gravity, the patchy lung's flow equals the symmetric lung's (0.2 %).
+  Moving half the units to 0.9 lowers their flow and raises the others'.
+- Options: `--doses=<a,b,..>`, `--breaths=<per dose>` (40), `--sigh`
+  (`--sighp`), `--fmax`, `--e50`, `--tau`, `--sigma`, `--seed`, `--rest`,
+  `--only`, `--tag`, `--dt`, `--out`. Files: `out/tone_<run><tag>.csv`
+  (one row per breath), `_units.csv` (each unit at the end of every
+  dose). The seven runs above take about 7 minutes.
+
 ## demos/
 
 Each is a standalone Lazarus project (own `.lpi`/`.lpr`/form unit/`.lfm`), built against newVM in the submodule.

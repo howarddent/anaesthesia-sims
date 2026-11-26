@@ -85,6 +85,11 @@ type
     Gravity: Double;     { cmH2O per cm }
     Width, Height: Double;  { cm }
     DS, SMax: Double;    { severity level step and cap }
+    { ActMode: levels are muscle activations 0, DS, .. SMax (thickening
+      and lining the case's everywhere), every level is built, and a
+      unit starts at activation Sev * A.Act; its Level may be changed
+      between steps (uToneLung) }
+    ActMode: Boolean;
   end;
 
   TPatchyLung = class
@@ -114,6 +119,8 @@ type
       const Alv: TAlveolusParams; const RefLaws: array of TTubeLaw);
     destructor Destroy; override;
     function SevAsthma(s: Double): TAsthma;
+    function LevelAsthma(j: Integer): TAsthma;
+    function LevelCount: Integer;
     function UnitPel(V: Double): Double;   { unit alveolar volume V (L) }
     function UnitVolume(PelU: Double): Double;
     { static state: unit volumes with no flow for the muscle pressure
@@ -151,6 +158,7 @@ begin
   Result.Height := 24;
   Result.DS := 0.25;
   Result.SMax := 3;
+  Result.ActMode := False;
 end;
 
 { ---------------------------------------------------------------- }
@@ -262,6 +270,21 @@ end;
 
 { ---------------------------------------------------------------- }
 
+function TPatchyLung.LevelAsthma(j: Integer): TAsthma;
+begin
+  if PP.ActMode then
+  begin
+    Result := A;
+    Result.Act := j * PP.DS;
+  end
+  else Result := SevAsthma(j * PP.DS);
+end;
+
+function TPatchyLung.LevelCount: Integer;
+begin
+  Result := Length(Tables);
+end;
+
 function TPatchyLung.SevAsthma(s: Double): TAsthma;
 begin
   Result.Act := Min(0.95, s * A.Act);
@@ -327,7 +350,10 @@ begin
     for g := 1 to PP.K do z := z + xi[g][u shr (PP.K - g)];
     z := z / Sqrt(PP.K);
     Sev[u] := Exp(PP.Sigma * z - 0.5 * Sqr(PP.Sigma));
-    Level[u] := EnsureRange(Round(Sev[u] / PP.DS), 0, nl - 1);
+    if PP.ActMode then
+      Level[u] := EnsureRange(Round(Sev[u] * A.Act / PP.DS), 0, nl - 1)
+    else
+      Level[u] := EnsureRange(Round(Sev[u] / PP.DS), 0, nl - 1);
     used[Level[u]] := True;
     { place: bits from the top split x, y, x, ... }
     x0 := 0; x1 := PP.Width; y0 := 0; y1 := PP.Height;
@@ -346,6 +372,8 @@ begin
     PX[u] := 0.5 * (x0 + x1); PY[u] := 0.5 * (y0 + y1);
     DPpl[u] := PP.Gravity * CmH2O * (PY[u] - 0.5 * PP.Height);
   end;
+  if PP.ActMode then
+    for j := 0 to nl - 1 do used[j] := True;
   { tube laws: the trunk's three walls at s = 1, and the membranous wall
     at every level used (BuildLaws reads the cache, and builds the rest
     in parallel) }
@@ -356,7 +384,7 @@ begin
   for j := 0 to nl - 1 do
     if used[j] then
     begin
-      sa := SevAsthma(j * PP.DS);
+      sa := LevelAsthma(j);
       Rings[nb] := WallRing(2, sa); lawIdx[j] := nb; Inc(nb);
     end;
   SetLength(Rings, nb); SetLength(Laws, nb);
@@ -373,7 +401,7 @@ begin
   begin
     Tables[j] := nil; LevL[j] := nil; Jobs[j] := nil;
     if not used[j] then Continue;
-    sa := SevAsthma(j * PP.DS);
+    sa := LevelAsthma(j);
     for g := 0 to NGen - 1 do
       if GenWall[g] = 2 then WL[g] := Laws[lawIdx[j]] else WL[g] := RefLaws[GenWall[g]];
     LevL[j] := TLung.CreateAirways(Prm, WL, RL, sa.Mucus);
