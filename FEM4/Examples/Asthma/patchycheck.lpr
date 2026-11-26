@@ -16,6 +16,11 @@ program patchycheck;
   4. Activation mode (stage 4's levels): every unit at the case's
      activation, no spread or gravity, again equals the symmetric lung;
      and moving units between levels moves only their own flows.
+  5. The ventilator's flow-set solve (SolveFlow): the airway opening
+     pressure it returns, fed back to Solve, gives the flow set, in
+     and out, in a patchy lung; and in the normal lung, with gravity,
+     the plateau after a 3 s end-inspiratory hold equals the static
+     pressure holding that volume (StaticState's muscle pressure).
 
   Build:  fpc -O3 -FUlib -Fu../../../newVM -Fi../../../newVM patchycheck.lpr }
 
@@ -24,6 +29,16 @@ program patchycheck;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, Math, cblas, newVM, uTubeLaw, uAirwayRing, uAlveolus, uLungModel, uPatchyLung;
+
+type
+  TZero = class
+    function P(t, V: Double): Double;
+  end;
+
+function TZero.P(t, V: Double): Double;
+begin
+  Result := 0;
+end;
 
 var
   Fails: Integer = 0;
@@ -149,6 +164,53 @@ begin
   if not ((L.Qu[0] < sum) and (L.Qu[L.NU - 1] > sum) and (qs < q)) then
   begin
     Writeln('  FAIL: constriction did not shift the flow'); Inc(Fails);
+  end;
+  L.Free;
+
+  Writeln('5. Ventilator: flow-set solve, and plateau against the static curve');
+  PP := DefaultPatchyParams;
+  L := TPatchyLung.Create(Prm, PP, A, Alv, RefLaws);
+  SetLength(V, L.NU);
+  L.StaticState(0, V);
+  for u := 0 to L.NU - 1 do V[u] := V[u] * (1 + 0.1 * Sin(u));
+  ppl := -6 * CmH2O;
+  for i := 0 to 1 do
+  begin
+    if i = 0 then qs := 0.5 * LitreMM3 else qs := -1.0 * LitreMM3;
+    palv := L.SolveFlow(V, ppl, qs);
+    L.Pao := palv;
+    q := L.Solve(V, ppl);
+    L.Pao := 0;
+    Check(Format('flow %.1f L/s set: Paw %.2f cmH2O, Solve there gives, L/s', [qs / LitreMM3, palv / CmH2O]),
+      q / LitreMM3, qs / LitreMM3, 1e-4);
+  end;
+  L.Free;
+  PP := DefaultPatchyParams;
+  PP.Sigma := 0;
+  A.Act := 0; A.Thick := 1; A.Mucus := 1;
+  L := TPatchyLung.Create(Prm, PP, A, Alv, RefLaws);
+  SetLength(V, L.NU);
+  L.StaticState(0, V);
+  with TPatchySim.Create(L, TZero.Create.P, V, 0.002) do
+  try
+    Mode := smFlow; QSet := -1.0 * LitreMM3; Evaluate;
+    while T < 0.5 - 1e-9 do Step;
+    QSet := 0; Evaluate;
+    while T < 3.5 - 1e-9 do Step;
+    vt := VTot;
+    { the muscle pressure whose static state has this volume }
+    vtop := 0; vbot := 40;
+    for i := 1 to 60 do
+    begin
+      sum := 0.5 * (vtop + vbot);
+      L.StaticState(sum, V);
+      ppl0 := Prm.VDead;
+      for u := 0 to L.NU - 1 do ppl0 := ppl0 + V[u];
+      if ppl0 < vt then vtop := sum else vbot := sum;
+    end;
+    Check(Format('plateau after 500 mL and a 3 s hold (V %.3f L), cmH2O', [vt]), Paw / CmH2O, sum, 2e-3);
+  finally
+    Free;
   end;
   L.Free;
   for i := 0 to NWall - 1 do RefLaws[i].Free;

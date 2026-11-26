@@ -114,6 +114,9 @@ type
     LimU: array of Boolean;
     Pc: Double;
     TrunkLimited: Boolean;
+    { pressure at the airway opening (kPa, against atmosphere) that Solve
+      works to: 0 breathing, the ventilator's when ventilated }
+    Pao: Double;
     Notes: string;
     constructor Create(const AP: TLungParams; const APP: TPatchyParams; const AA: TAsthma;
       const Alv: TAlveolusParams; const RefLaws: array of TTubeLaw);
@@ -129,12 +132,26 @@ type
     { mouth flow (mm3/s, positive out) for unit volumes V and the pleural
       pressure at mid-height Ppl; fills Pu, PplU, Qu, LimU, Pc }
     function Solve(const V: array of Double; Ppl: Double): Double;
+    { the other way round, for a ventilator setting the flow: the airway
+      opening pressure (kPa) at which the mouth flow is Q (mm3/s,
+      positive out; 0 for an occlusion); fills what Solve fills. With
+      an obstructed lung a large outward Q may be impossible: the
+      pressure then runs to the bottom of its search, and Limited says
+      so. }
+    function SolveFlow(const V: array of Double; Ppl, Q: Double): Double;
   end;
+
+  { smPressure: the airway opening is held at Paw (breathing: 0);
+    smFlow: the mouth flow is held at QSet and Paw follows }
+  TSimMode = (smPressure, smFlow);
 
   TPatchySim = class
   public
     Lung: TPatchyLung;   { not owned }
     Musc: TMuscleFn;
+    Mode: TSimMode;
+    QSet: Double;        { mm3/s, positive out }
+    Paw: Double;         { kPa }
     Dt, T: Double;
     V: array of Double;  { L }
     Q, Ppl, Pmus, VTot: Double;
@@ -501,9 +518,9 @@ begin
     Q := Q + FWork[u];
   end;
   if Q >= 0 then
-    Result := Trunk.MarchUp(Q, Pc, PplU[0] - DPpl[0], PP.K - 1, 0, True, Choked)
+    Result := Trunk.MarchUp(Q, Pc, PplU[0] - DPpl[0], PP.K - 1, 0, True, Choked) - Pao
   else
-    Result := Pc - Trunk.MarchDown(-Q, 0, PplU[0] - DPpl[0], 0, PP.K - 1, True, Choked);
+    Result := Pc - Trunk.MarchDown(-Q, Pao, PplU[0] - DPpl[0], 0, PP.K - 1, True, Choked);
   if Choked then
   begin
     if Q >= 0 then Result := -1e30 else Result := 1e30;
@@ -516,7 +533,7 @@ var
   lo, hi, flo, fhi, x, fx: Double;
   ch, chLo, chHi: Boolean;
 begin
-  lo := 0; hi := 0;
+  lo := Pao; hi := Pao;
   for u := 0 to NU - 1 do
   begin
     PplU[u] := Ppl + DPpl[u];
@@ -564,6 +581,72 @@ begin
   end;
 end;
 
+function TPatchyLung.SolveFlow(const V: array of Double; Ppl, Q: Double): Double;
+var
+  u, it: Integer;
+  lo, hi, mid, s, pTop, plo, phi, pm: Double;
+  lim, ch: Boolean;
+
+  function Sum(PcX: Double): Double;
+  var
+    k: Integer;
+  begin
+    Result := 0;
+    for k := 0 to NU - 1 do
+    begin
+      FWork[k] := UnitFlow(k, Pu[k], PcX, PplU[k], lim);
+      LimU[k] := lim;
+      Result := Result + FWork[k];
+    end;
+  end;
+
+begin
+  lo := 1e30; hi := -1e30;
+  for u := 0 to NU - 1 do
+  begin
+    PplU[u] := Ppl + DPpl[u];
+    Pu[u] := PplU[u] + UnitPel(V[u]);
+    lo := Min(lo, Pu[u]); hi := Max(hi, Pu[u]);
+  end;
+  { the units' outflow falls as Pc rises: find Pc giving Q. The tables
+    end 80 cmH2O above pleural pressure, which bounds the search. }
+  pTop := Ppl + 75 * CmH2O;
+  lo := Max(lo - 1e-9, Ppl + PtLo + 1 * CmH2O); hi := Min(hi + 1e-9, pTop);
+  while (Sum(hi) > Q) and (hi < pTop) do hi := Min(pTop, hi + Max(1e-3, hi - lo));
+  while (Sum(lo) < Q) and (lo > Ppl + PtLo + 2 * CmH2O) do lo := Max(Ppl + PtLo + 1 * CmH2O, lo - Max(1e-3, hi - lo));
+  for it := 1 to 100 do
+  begin
+    mid := 0.5 * (lo + hi);
+    s := Sum(mid);
+    if s > Q then lo := mid else hi := mid;
+    if hi - lo < 1e-9 then Break;
+  end;
+  Pc := 0.5 * (lo + hi);
+  s := Sum(Pc);
+  TrunkLimited := False;
+  { the trunk, from Pc to the airway opening with the units' flow s }
+  if s >= 0 then
+  begin
+    Result := Trunk.MarchUp(s, Pc, Ppl, PP.K - 1, 0, True, ch);
+    TrunkLimited := ch;
+  end
+  else
+  begin
+    { MarchDown(Pao) = Pc, rising in Pao }
+    plo := Pc; phi := Pc + 1 * CmH2O;
+    while Trunk.MarchDown(-s, phi, Ppl, 0, PP.K - 1, True, ch) < Pc do phi := phi + (phi - plo);
+    for it := 1 to 80 do
+    begin
+      pm := 0.5 * (plo + phi);
+      if Trunk.MarchDown(-s, pm, Ppl, 0, PP.K - 1, True, ch) < Pc then plo := pm else phi := pm;
+      if phi - plo < 1e-9 then Break;
+    end;
+    Result := 0.5 * (plo + phi);
+  end;
+  Pao := Result;
+  for u := 0 to NU - 1 do Qu[u] := FWork[u];
+end;
+
 { ---------------------------------------------------------------- }
 
 constructor TPatchySim.Create(ALung: TPatchyLung; AMusc: TMuscleFn; const V0: array of Double; ADt: Double);
@@ -572,6 +655,7 @@ var
 begin
   inherited Create;
   Lung := ALung; Musc := AMusc; Dt := ADt; T := 0;
+  Mode := smPressure; QSet := 0; Paw := 0;
   SetLength(V, Lung.NU);
   for u := 0 to Lung.NU - 1 do V[u] := V0[u];
   Evaluate;
@@ -585,7 +669,17 @@ begin
   for u := 0 to Lung.NU - 1 do VTot := VTot + V[u];
   Pmus := Musc(T, VTot);
   Ppl := Lung.Trunk.Pcw(VTot) - CmH2O * Pmus;
-  Q := Lung.Solve(V, Ppl);
+  if Mode = smFlow then
+  begin
+    Paw := Lung.SolveFlow(V, Ppl, QSet);
+    Q := 0;
+    for u := 0 to Lung.NU - 1 do Q := Q + Lung.Qu[u];
+  end
+  else
+  begin
+    Lung.Pao := Paw;
+    Q := Lung.Solve(V, Ppl);
+  end;
   NLim := 0; NClosed := 0;
   for u := 0 to Lung.NU - 1 do
     if Lung.LimU[u] then

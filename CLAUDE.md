@@ -1651,6 +1651,102 @@ unit's `Level` may change between steps.
   (one row per breath), `_units.csv` (each unit at the end of every
   dose). The seven runs above take about 7 minutes.
 
+#### Stage 5: the ventilated asthmatic (2026-11-26)
+
+`ventrun.lpr` (its header has the protocol), `plot_vent.py`
+(`out/vent.png`), check 5 in `patchycheck`. This is the paralysed
+patient with severe asthma on a ventilator, after Tuxen and Lane (Am
+Rev Respir Dis 1987).
+
+- **`uPatchyLung` changes**:
+  - `Pao`: the airway opening pressure that `Solve` works to (0 when
+    breathing).
+  - `SolveFlow(V, Ppl, Q)`: the airway opening pressure at which the
+    mouth flow is Q. It bisects on the trunk's lower-end pressure for
+    the units' summed flow, then inverts the trunk march.
+  - `TPatchySim.Mode`: `smPressure` (Paw held) or `smFlow` (QSet held,
+    Paw follows; QSet 0 is an occlusion).
+- **Setup**: 256 units, gravity, no muscle pressure, so the pleural
+  pressure is the chest wall's recoil. An endotracheal tube replaces
+  the upper airway (Rohrer K1 1, K2 4, about 5 cmH2O at 1 L/s, assumed
+  for an 8 mm tube). Volume control, square wave at 60 L/min.
+- **Measurement**: each setting starts relaxed at its PEEP and runs to
+  steady end-expiratory volume (at most 60 breaths). Then:
+  - peak pressure;
+  - plateau after a 0.5 s end-inspiratory hold;
+  - total PEEP after a 2 s end-expiratory hold;
+  - VEI as Tuxen measured it: the volume exhaled in a 30 s apnoea from
+    end-inspiration, plus the volume still left above the relaxed FRC
+    after it.
+- **Lungs**:
+  - normal;
+  - status asthmaticus: tone 0.8 in units and trunk, tone ignoring
+    stretch (stage 4's asthmatic muscle), wall x 3 (the thickening of
+    fatal asthma, James et al. 1989), normal lining;
+  - the same with lining x 1.5 (`--name=asthma_mucus --mucus=1.5`).
+- **Why wall x 3**: with stage 4's severe wall (x 1.75, lining x 2) at
+  tone 0.8 the ventilated peak was only 18 cmH2O. That is the mucosal
+  folding floor again: at x 1.75 the lumen at full tone stops at 0.28
+  of its full area, while a thicker wall folds into fewer, larger
+  folds and narrows further (Wiggs), to 0.13 at x 3.25. Wall x 3 gives
+  peaks of 32-37 cmH2O at 60 L/min, an airway resistance of about
+  20 cmH2O s/L, in the range of ventilated status asthmaticus.
+- **Results**, 500 mL breaths unless stated; EEV is end-expiratory gas
+  above the relaxed FRC:
+
+  | lung | setting | VE | Ppeak | Pplat | PEEPi (hold) | EEV (mL) | VEI (mL) | VEI by apnoea | left after apnoea |
+  |---|---|---|---|---|---|---|---|---|---|
+  | normal | 8-24 /min | 4-12 | 11.2 | 5.3 | 0 | 0 | 500 | 500 | 0 |
+  | normal | 1 L at 10 /min | 10 | 16.7 | 11.0 | 0 | 0 | 1000 | 1000 | 0 |
+  | asthma | 8 /min | 4 | 31.8 | 10.7 | 0.2 | 523 | 1022 | 501 | 513 |
+  | asthma | 16 /min | 8 | 32.1 | 11.2 | 1.0 | 573 | 1069 | 512 | 523 |
+  | asthma | 24 /min | 12 | 32.7 | 12.2 | 2.6 | 656 | 1150 | 539 | 541 |
+  | asthma | 1 L at 10 /min | 10 | 36.6 | 18.2 | 0.7 | 634 | 1634 | 1006 | 594 |
+  | asthma | 16 /min, PEEP 5 | 8 | 33.8 | 13.9 | 0.4 | 802 | 1301 | 706 | 581 |
+  | asthma | 16 /min, PEEP 10 | 8 | 36.1 | 17.4 | 0.3 | 1067 | 1566 | 957 | 593 |
+
+  The lining x 1.5 lung shuts every unit at FRC. Ventilation pumps it
+  up to 2.1 L above FRC (VEI 2.6 L), where the linings stay open, with
+  peak 52, plateau 35.6 and total PEEP 15.9 cmH2O identical from 4 to
+  12 L/min. A 1 L tidal volume gives VEI 3.4 L and plateau 43. Applied
+  PEEP 5 and 10 lowers the measured intrinsic PEEP to 11.5 and 7.0 but
+  adds 120 and 220 mL. Every setting reached the 60-breath cap still
+  creeping by a fraction of a mL a breath.
+- **What it shows**:
+  - **Tuxen's direction is reproduced**: more minute ventilation (a
+    shorter expiration) raises trapped gas, VEI, plateau and intrinsic
+    PEEP. A larger tidal volume raises VEI and plateau most.
+  - **The size of the effect is smaller than his**: trapped gas rises
+    only 130 mL from 4 to 12 L/min. Most of the trapping is airway
+    closure: 202 of 256 units are shut at FRC.
+  - **Hidden auto-PEEP**: 500-650 mL of gas is trapped behind shut
+    airways, yet the end-expiratory hold reads 0.2-2.6 cmH2O, because
+    the shut units don't communicate with the airway opening
+    (Leatherman and Ravenscraft, Crit Care Med 1996). The apnoea
+    likewise leaves half a litre behind, so Tuxen's apnoea measure
+    under-reads VEI by that much.
+  - **Extrinsic PEEP**: 5 and 10 cmH2O lower the measured intrinsic
+    PEEP a little but add their own volume (EEV +230 and +490 mL, VEI
+    1.30 and 1.57 L at 8 L/min), as Tuxen found for PEEP in asthma.
+  - With more lining (x 1.5) the closure is total and the
+    hyperinflation is set by the linings' closing volume, not by the
+    ventilator.
+- **Limits**: no closure hysteresis, so a unit reopens as soon as its
+  transmural pressure passes `PClose`; no gas absorption behind shut
+  airways; the tube coefficients and tone are assumed; supine posture
+  and the lower FRC of anaesthesia aren't modelled (the upright
+  gravity gradient is kept); quasi-steady flow.
+- **Checks**: `patchycheck` 5.
+  - The airway opening pressure from `SolveFlow`, fed back to `Solve`,
+    returns the set flow, in and out (1e-8).
+  - In the normal lung with gravity, the plateau after 500 mL and a
+    3 s hold equals the static pressure for that volume from
+    `StaticState` (1e-9).
+- Options: `--only`, `--dose`, `--thick`, `--mucus`, `--name`, `--flow`,
+  `--k`, `--seed`, `--dt`, `--quick`, `--out`. Files: `out/vent_<lung>.csv`
+  (a row per setting) and `out/vent_<lung>_<n>.csv` (the measured
+  breath, holds and apnoea). About 15 minutes for all three lungs.
+
 ## demos/
 
 Each is a standalone Lazarus project (own `.lpi`/`.lpr`/form unit/`.lfm`), built against newVM in the submodule.
