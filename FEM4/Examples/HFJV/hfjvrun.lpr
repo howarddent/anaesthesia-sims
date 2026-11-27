@@ -35,6 +35,10 @@ program hfjvrun;
            needs to <prefix>_dofs.txt; with --eig=<Hz>, also a
            shift-invert Krylov basis about i 2 pi <Hz> for eig_modes.py,
            --krylov=<m> vectors (80), to <prefix>_kry<Hz>.bin),
+           --eigvm=<Hz> (only print the modes up to 2 x <Hz>, found in
+           Pascal by newVM alone: real shift-invert Arnoldi about
+           -2 pi <Hz> and EigDecompose on the Hessenberg matrix; no files,
+           no Python; --krylov as above),
            --rua=<cmH2O/(L/s)> (1.0) and --kua=<cmH2O/(L/s)^2> (1.0), the
            upper airway's laminar and turbulent loss (--kua=0 --rua=2 is
            the earlier linear model), --glottis=<cm2> (0.8, the
@@ -78,7 +82,7 @@ program hfjvrun;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, StrUtils, Math, cblas, newVM, newVMsparse, uDescriptor, uAbdomenFluid,
+  SysUtils, StrUtils, Math, cblas, OneAPI, newVM, newVMComplex, newVMsparse, uDescriptor, uAbdomenFluid,
   uAbdomenBox, uTorsoAbdomen, uThorax, uHFJVSolve, uJetCalcVM;
 
 function Opt(const Name : String; Def : Double) : Double;
@@ -656,6 +660,166 @@ begin
   WriteLn('Wrote ', Fn);
 end;
 
+procedure EigVM(HzShift : Double; m : Integer);
+// The modes near a real shift Sigma = -2 pi HzShift, with newVM alone:
+// real Arnoldi on OP = (Sigma E - A)^-1 E (PARDISO, factorised once) gives
+// a real m x m Hessenberg H; EigDecompose (LAPACKE_dgeev) gives its Ritz
+// values nu and vectors y, so lambda = Sigma - 1/nu and x = V y (MatMult).
+// A real shift sits on the decaying axis, among the heavily damped
+// abdominal modes; each mode is checked by |A x - lambda E x| / |A x|.
+type
+  TModeRow = record
+    fn, fd, zeta, res, Vw, Vd, share, VL : Double;
+  end;
+var
+  LU : TPardisoFactor;
+  N, j, i, k, pass, q, nm, eb, NRow : Integer;
+  V : array of TDoubleArray;
+  w : TDoubleArray;
+  Hm, Vm, Yr, Yi, Xr, Xi, xc, yc, Axr, Axi, Exr, Exi : TVMobj;
+  Ev, Evec : TVMobjZ;
+  nu : TComplex16;
+  c, nrm, Sigma, d, lr, li, rr, ri, ra, smax, a2, aw, er, ei : Double;
+  vwr, vwi, vdr, vdi, vlr, vli, fmax : Double;
+  ww, wd : TDoubleArray;
+  Rows : array of TModeRow;
+  Tmp : TModeRow;
+  procedure ApplyOp(const x : TDoubleArray; var y : TDoubleArray);
+  var T, Ex, Xs : TVMobj;
+  begin
+    T := TVMobj.Create(N, 1);
+    Move(x[0], T.DataPtr[0], N * SizeOf(Double));
+    Ex := Sys.MulE(T);
+    Xs := LU.Solve(Ex);
+    SetLength(y, N);
+    Move(Xs.DataPtr[0], y[0], N * SizeOf(Double));
+  end;
+  function Col(const M : TVMobj; kc : Integer) : TVMobj;
+  var r : Integer;
+  begin
+    Result := TVMobj.Create(M.Rows, 1);
+    for r := 0 to M.Rows - 1 do Result.DataPtr[r] := M.DataPtr[r * M.Cols + kc];
+  end;
+begin
+  N := Sys.N;
+  Sigma := -2 * Pi * HzShift;
+  WriteLn(Format('newVM shift-invert Arnoldi about the real shift %.2f /s (-2 pi x %.2f Hz), %d vectors',
+    [Sigma, HzShift, m]));
+  LU := Sys.FactorShift(Sigma);
+  Hm := TVMobj.Create(m, m);
+  SetLength(V, m + 1);
+  try
+    RandSeed := 777;
+    SetLength(w, N);
+    for k := 0 to N - 1 do w[k] := Random - 0.5;
+    ApplyOp(w, V[0]);     // removes the algebraic (infinite) part
+    nrm := 0;
+    for k := 0 to N - 1 do nrm := nrm + Sqr(V[0][k]);
+    nrm := Sqrt(nrm);
+    for k := 0 to N - 1 do V[0][k] := V[0][k] / nrm;
+    for j := 0 to m - 1 do
+    begin
+      ApplyOp(V[j], w);
+      for pass := 1 to 2 do
+        for i := 0 to j do
+        begin
+          c := 0;
+          for k := 0 to N - 1 do c := c + V[i][k] * w[k];
+          for k := 0 to N - 1 do w[k] := w[k] - c * V[i][k];
+          Hm[i, j] := Hm[i, j] + c;
+        end;
+      nrm := 0;
+      for k := 0 to N - 1 do nrm := nrm + Sqr(w[k]);
+      nrm := Sqrt(nrm);
+      if j + 1 < m then Hm[j + 1, j] := nrm;
+      SetLength(V[j + 1], N);
+      for k := 0 to N - 1 do V[j + 1][k] := w[k] / nrm;
+      Write(#13'  vector ', j + 1, ' of ', m);
+    end;
+    WriteLn;
+  finally
+    LU.Free;
+  end;
+
+  // the m x m eigenproblem: newVM's EigDecompose
+  EigDecompose(Hm, Ev, Evec);
+  Vm := TVMobj.Create(N, m);
+  for k := 0 to N - 1 do
+    for j := 0 to m - 1 do Vm.DataPtr[k * m + j] := V[j][k];
+  Yr := GetRealPart(Evec);
+  Yi := GetImagPart(Evec);
+  Xr := MatMult(Vm, Yr);     // Ritz vectors x = V y, real and imaginary parts
+  Xi := MatMult(Vm, Yi);
+
+  ww := F.SurfaceWeights(SurfWall);
+  wd := F.SurfaceWeights(SurfDiaphragm);
+  eb := F.EtaBase;
+  nm := F.NbMovingDofs;
+  fmax := 2 * HzShift;
+  NRow := 0;
+  SetLength(Rows, m);
+  for k := 0 to m - 1 do
+  begin
+    nu := Ev[k, 0];
+    d := Sqr(nu.re) + Sqr(nu.im);
+    if d = 0 then Continue;
+    lr := Sigma - nu.re / d;          // lambda = Sigma - 1/nu
+    li := nu.im / d;
+    if (li < -1e-9) or (Sqrt(lr * lr + li * li) / (2 * Pi) > fmax) then Continue;
+    xc := Col(Xr, k); yc := Col(Xi, k);
+    Axr := Sys.MulA(xc); Axi := Sys.MulA(yc);
+    Exr := Sys.MulE(xc); Exi := Sys.MulE(yc);
+    rr := 0; ra := 0;
+    for q := 0 to N - 1 do
+    begin
+      er := Axr.DataPtr[q] - (lr * Exr.DataPtr[q] - li * Exi.DataPtr[q]);
+      ei := Axi.DataPtr[q] - (lr * Exi.DataPtr[q] + li * Exr.DataPtr[q]);
+      rr := rr + er * er + ei * ei;
+      ra := ra + Sqr(Axr.DataPtr[q]) + Sqr(Axi.DataPtr[q]);
+    end;
+    // scale to 1 mm of peak surface displacement
+    smax := 0; a2 := 0; aw := 0;
+    vwr := 0; vwi := 0; vdr := 0; vdi := 0;
+    for q := 0 to nm - 1 do
+    begin
+      er := xc.DataPtr[eb + q]; ei := yc.DataPtr[eb + q];
+      ri := er * er + ei * ei;
+      smax := Max(smax, Sqrt(ri));
+      a2 := a2 + ri;
+      if ww[q] <> 0 then aw := aw + ri;
+      vwr := vwr + ww[q] * er; vwi := vwi + ww[q] * ei;
+      vdr := vdr + wd[q] * er; vdi := vdi + wd[q] * ei;
+    end;
+    smax := smax * 1e3;
+    vlr := xc.DataPtr[Th.iVrc] + vdr; vli := yc.DataPtr[Th.iVrc] + vdi;
+    with Rows[NRow] do
+    begin
+      fn := Sqrt(lr * lr + li * li) / (2 * Pi);
+      fd := li / (2 * Pi);
+      zeta := -lr / Sqrt(lr * lr + li * li);
+      res := Sqrt(rr / ra);
+      Vw := 1e6 * Sqrt(vwr * vwr + vwi * vwi) / smax;
+      Vd := 1e6 * Sqrt(vdr * vdr + vdi * vdi) / smax;
+      share := 100 * aw / a2;
+      VL := 1e6 * Sqrt(vlr * vlr + vli * vli) / smax;
+    end;
+    Inc(NRow);
+  end;
+  for i := 1 to NRow - 1 do      // sort by f_n
+  begin
+    Tmp := Rows[i]; j := i - 1;
+    while (j >= 0) and (Rows[j].fn > Tmp.fn) do begin Rows[j + 1] := Rows[j]; Dec(j); end;
+    Rows[j + 1] := Tmp;
+  end;
+  WriteLn('Volumes per mm of peak surface displacement; wall share of the surfaces'' displacement');
+  WriteLn('   f_n Hz   f_d Hz    zeta       Q     resid   V_wall mL  V_dia mL  wall %  V_lung mL');
+  for i := 0 to NRow - 1 do
+    with Rows[i] do
+      WriteLn(Format('%8.3f %8.3f %8.4f %7.2f  %8.1e  %9.2f %9.2f %6.0f %10.2f%s',
+        [fn, fd, zeta, IfThen(zeta > 0, 1 / (2 * zeta), Infinity), res, Vw, Vd, share, VL,
+         IfThen(res < 1e-6, '', '  (not converged)')]));
+end;
+
 procedure TissueLine(const What : String; K : TTissueKind; Eta : Double);
 var
   R0, E0, R1, E1 : Double;
@@ -800,6 +964,12 @@ begin
     if Opt('eig', 0) > 0 then
       KrylovFile(Format('%s_kry%.2f.bin', [StrOpt('eigdump'), Opt('eig', 0)]),
         Opt('eig', 0), Round(Opt('krylov', 80)));
+    Th.Free; Sys.Free; F.Free; Box.Free; Torso.Free;
+    Exit;
+  end;
+  if (not Lumped) and (Opt('eigvm', 0) > 0) then
+  begin
+    EigVM(Opt('eigvm', 0), Round(Opt('krylov', 80)));
     Th.Free; Sys.Free; F.Free; Box.Free; Torso.Free;
     Exit;
   end;

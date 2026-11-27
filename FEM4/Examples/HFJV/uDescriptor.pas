@@ -75,6 +75,8 @@ type
     { (i Omega E - A) as the real 2N block system [[-A, -Omega E],
       [Omega E, -A]] on (Xr; Xi), factorised; the caller frees it. }
     function FactorFrequency(Omega : Double) : TPardisoFactor;
+    { (Sigma E - A) for a real shift Sigma, factorised; the caller frees it. }
+    function FactorShift(Sigma : Double) : TPardisoFactor;
     procedure WriteTriplets(const FileName : String);
     { (i w E - A) X = B. Br, Bi and the results are (N,1). }
     procedure SolveFrequency(Omega : Double; const Br, Bi : TVMobj;
@@ -262,6 +264,25 @@ begin
   Trimmed(T, R, C, V);
   M := TripletsToSparse(2 * nn, 2 * nn, R, C, V);
   Result := TPardisoFactor.Create(M, 11);
+end;
+
+function TDescriptorSystem.FactorShift(Sigma : Double) : TPardisoFactor;
+var
+  T : TTriplets;
+  k, i : Integer;
+  R, C : TIntegerArray;
+  V : TDoubleArray;
+begin
+  Build;
+  T.Clear;
+  for k := 0 to FA.Count - 1 do
+    T.Add(FA.R[k], FA.C[k], -FA.V[k]);
+  for k := 0 to FE.Count - 1 do
+    T.Add(FE.R[k], FE.C[k], Sigma * FE.V[k]);
+  for i := 0 to FN - 1 do
+    T.Add(i, i, 0);
+  Trimmed(T, R, C, V);
+  Result := TPardisoFactor.Create(TripletsToSparse(FN, FN, R, C, V), 11);
 end;
 
 procedure TDescriptorSystem.SolveFrequencyN(Omega : Double; const Br, Bi : array of TVMobj;
