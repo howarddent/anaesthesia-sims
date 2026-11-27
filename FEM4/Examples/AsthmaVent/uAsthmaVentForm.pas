@@ -31,6 +31,7 @@ uses
 
 const
   RingN = 4000;
+  LoopBreaths = 4;
   WindowSec = 15;
 
 type
@@ -74,6 +75,7 @@ type
     FTimer: TTimer;
     FLeft, FRight, FMonPanel, FPlotPanel: TPanel;
     FPlots: array[0..3] of TVMPlot2D;
+    FLoop: TVMPlot2D;      { flow-volume loop of the last LoopBreaths breaths }
     FMode, FPreset, FSpeed: TComboBox;
     FRate, FVT, FPInsp, FPS, FPEEP, FIE, FRise, FTrig, FExpTrig, FPLimit: TFloatSpinEdit;
     FTone, FEffort, FPatRate, FPatTi: TFloatSpinEdit;
@@ -104,6 +106,7 @@ type
     function ReadPatient: TPatientSettings;
     procedure UpdateEnabled;
     procedure Redraw;
+    procedure DrawLoop(const S: array of TVentSample; const Br: array of TBreathRec; FRCPeep: Double);
     procedure ShowMonitor(const M: TVentMonitor; const VS: TVentSettings);
     procedure DoSnapshot;
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
@@ -376,7 +379,7 @@ var
   V: TVentSettings;
   P: TPatientSettings;
 const
-  PlotTitles: array[0..3] of string = ('Airway pressure at the Y-piece (solid), mean alveolar pressure of the open units (dashed)',
+  PlotTitles: array[0..3] of string = ('Airway pressure at the Y-piece (solid), mean alveolar of open units (dashed)',
     'Flow at the Y-piece (inspiration positive)', 'Lung volume above the relaxed FRC (dashed: relaxed volume at the set PEEP)',
     'Pleural pressure at mid-height (solid), inspiratory muscle pressure (dashed)');
   PlotY: array[0..3] of string = ('cmH2O', 'L/min', 'mL', 'cmH2O');
@@ -504,18 +507,26 @@ begin
     FPlots[i].LegendCorner := lcTopLeft;
     FPlots[i].ClearSeries;
   end;
+  FLoop := TVMPlot2D.Create(Self);
+  FLoop.Parent := FPlotPanel;
+  FLoop.Title := Format('Flow-volume loop, last %d breaths', [LoopBreaths]);
+  FLoop.XAxisTitle := 'volume above relaxed FRC (mL)';
+  FLoop.YAxisTitle := 'flow (L/min), insp. up';
+  FLoop.ClearSeries;
   PlotPanelResize(nil);
 end;
 
 procedure TVentForm.PlotPanelResize(Sender: TObject);
 var
-  i, h: Integer;
+  i, h, lw: Integer;
 begin
+  { the loop sits to the right of the pressure and flow traces }
   h := FPlotPanel.ClientHeight div 4;
+  lw := Min(Round(2.6 * h), FPlotPanel.ClientWidth div 3);
   for i := 0 to 3 do
-  begin
-    FPlots[i].SetBounds(0, i * h, FPlotPanel.ClientWidth, h);
-  end;
+    if i < 2 then FPlots[i].SetBounds(0, i * h, FPlotPanel.ClientWidth - lw, h)
+    else FPlots[i].SetBounds(0, i * h, FPlotPanel.ClientWidth, h);
+  FLoop.SetBounds(FPlotPanel.ClientWidth - lw, 0, lw, 2 * h);
 end;
 
 function TVentForm.ReadVent: TVentSettings;
@@ -800,6 +811,70 @@ begin
   FPlots[3].ClearXMarkers;
   for j := 0 to High(Ms) do
     if (Ms[j] >= S[0].T) and (Ms[j] <= tEnd) then FPlots[3].AddXMarker(Ms[j], RGBToColor(220, 0, 0), 'missed trigger');
+  DrawLoop(S, Br, frcPeep);
+end;
+
+{ Flow against volume for the last LoopBreaths breaths in the window, one
+  series each from its start to the next breath's start (the newest is the
+  breath in progress, so its loop grows live). Volume is above the relaxed
+  FRC, as in the volume trace, so gas trapping moves the loops right, and
+  expiratory flow still running when the next breath starts shows as a
+  loop that does not close on the zero-flow line. }
+procedure TVentForm.DrawLoop(const S: array of TVentSample; const Br: array of TBreathRec; FRCPeep: Double);
+var
+  i, j, k, j0, nb, ser: Integer;
+  t0, t1, vlo, vhi, flo, fhi, f: Double;
+  inB: array of Integer;  { breath of each sample, or -1 }
+begin
+  FLoop.ClearSeries;
+  FLoop.ClearXMarkers;
+  { breaths that start inside the window, newest LoopBreaths of them }
+  j0 := Length(Br);
+  nb := 0;
+  while (j0 > 0) and (nb < LoopBreaths) and (Br[j0 - 1].TStart >= S[0].T) do
+  begin
+    Dec(j0); Inc(nb);
+  end;
+  if nb = 0 then Exit;
+  SetLength(inB, Length(S));
+  vlo := FRCPeep; vhi := FRCPeep + 500; flo := -30; fhi := 30;
+  for i := 0 to High(S) do
+  begin
+    inB[i] := -1;
+    for k := 0 to nb - 1 do
+    begin
+      j := j0 + k;
+      t0 := Br[j].TStart;
+      if j < High(Br) then t1 := Br[j + 1].TStart else t1 := S[High(S)].T + 1;
+      if (S[i].T >= t0) and (S[i].T <= t1) then inB[i] := k;
+    end;
+    if inB[i] >= 0 then
+    begin
+      vlo := Min(vlo, S[i].Vol); vhi := Max(vhi, S[i].Vol);
+      flo := Min(flo, S[i].Flow); fhi := Max(fhi, S[i].Flow);
+    end;
+  end;
+  { the axis range first, in round steps, as a hidden series, so the ticks
+    are settled before the loops go in (PlotXY refits on every point) }
+  FLoop.SetSeriesStyle(0, clWhite, 1, plsNone, '');
+  FLoop.PlotXY(NiceLo(vlo, 250), NiceLo(flo, 30), 0);
+  FLoop.PlotXY(NiceHi(vhi, 250), NiceHi(fhi, 30), 0);
+  for k := 0 to nb - 1 do
+  begin
+    { oldest palest, newest dark and thick }
+    f := (k + 1) / nb;
+    FLoop.SetSeriesStyle(k + 1, RGBToColor(Round(200 - 200 * f), Round(225 - 115 * f), Round(210 - 140 * f)),
+      1 + Ord(k = nb - 1) * 1.5, plsSolid, '');
+  end;
+  { every third sample (0.06 s), plus any where the flow jumps, so square
+    flow edges stay square: PlotXY costs a refit per point }
+  for i := 0 to High(S) do
+    if inB[i] >= 0 then
+      if (i mod 3 = 0) or (i = High(S)) or ((i > 0) and (Abs(S[i].Flow - S[i - 1].Flow) > 4))
+        or ((i < High(S)) and (Abs(S[i + 1].Flow - S[i].Flow) > 4)) or ((i > 0) and (inB[i - 1] <> inB[i]))
+        or ((i < High(S)) and (inB[i + 1] <> inB[i])) then
+        FLoop.PlotXY(S[i].Vol, S[i].Flow, inB[i] + 1);
+  FLoop.AddXMarker(FRCPeep, RGBToColor(120, 120, 120), 'relaxed at PEEP');
 end;
 
 procedure TVentForm.TimerTick(Sender: TObject);
@@ -829,6 +904,7 @@ var
 begin
   FTimer.Enabled := False;
   for i := 0 to 3 do FPlots[i].SaveToPNG(Format('%s_%s.png', [FSnapPrefix, Names[i]]));
+  FLoop.SaveToPNG(FSnapPrefix + '_loop.png');
   bmp := GetFormImage;
   bmp.SaveToFile(FSnapPrefix + '_window.bmp');
   bmp.Free;

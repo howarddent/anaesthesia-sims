@@ -2181,6 +2181,17 @@ ventilator logic, `uAsthmaVentForm.pas`'s the window.
   spread); after salbutamol (0.6); near-fatal (0.9). Heliox as stage 8.
   The muscles are spontrun's half-sine at the patient's own rate, with
   8 % jitter of the period; effort 0 is paralysed.
+- **Flow-volume loop** (2026-11-27): a fifth plot to the right of the
+  pressure and flow traces, the last 4 breaths in the window (oldest
+  palest, the breath in progress thick, so it grows live), flow against
+  volume above the relaxed FRC with the relaxed volume at PEEP marked.
+  Trapping moves the loops right; flow still running at the next breath
+  leaves the loop open above the zero line. Drawn with `PlotXY`, since
+  the series don't share an X; that refits the plot on every point, and
+  with every sample a 40 s snapshot took 4 min 40 s (mostly system time)
+  instead of 20 s. So it plots every third sample plus any where the
+  flow jumps by more than 4 L/min, and puts the hidden axis-range series
+  in first. Snapshot adds `_loop.png`.
 - **Posture** (2026-11-27, after the user found the pleural trace wrong:
   it stayed negative through ventilator breaths). Upright was the Asthma
   stages' chest wall (relaxed 4.1 L, 0.2 L/cmH2O), so a passive 500 mL
