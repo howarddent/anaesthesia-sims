@@ -488,24 +488,24 @@ begin
   m := Max(AJIn, AJOut);
   if m > High(J) then
   begin
+    { plain indexing, no while/with: FPC 3.2.2 -O3 on Win64 miscompiled
+      the earlier form, so the first AddVessel already saw NV > 2 }
     k := Length(J);
     SetLength(J, m + 1);
-    while k <= m do
+    for k := k to m do
     begin
-      J[k].NV := 0; J[k].G := 0; J[k].Fraction := 0; J[k].Leaks := ''; J[k].HasInflow := False; J[k].C := 0; J[k].R2 := 0; J[k].BranchR := 0; J[k].BranchN := 1; J[k].Zc := 0;
-      Inc(k);
+      J[k] := Default(TJunction);
+      J[k].BranchN := 1;
     end;
   end;
-  with J[AJIn] do
-  begin
-    if NV > 2 then raise Exception.Create('AddVessel : more than three vessels at a junction');
-    V[NV] := Result; AtEnd[NV] := False; Inc(NV);
-  end;
-  with J[AJOut] do
-  begin
-    if NV > 2 then raise Exception.Create('AddVessel : more than three vessels at a junction');
-    V[NV] := Result; AtEnd[NV] := True; Inc(NV);
-  end;
+  if J[AJIn].NV > 2 then raise Exception.Create('AddVessel : more than three vessels at a junction');
+  J[AJIn].V[J[AJIn].NV] := Result;
+  J[AJIn].AtEnd[J[AJIn].NV] := False;
+  J[AJIn].NV := J[AJIn].NV + 1;
+  if J[AJOut].NV > 2 then raise Exception.Create('AddVessel : more than three vessels at a junction');
+  J[AJOut].V[J[AJOut].NV] := Result;
+  J[AJOut].AtEnd[J[AJOut].NV] := True;
+  J[AJOut].NV := J[AJOut].NV + 1;
 end;
 
 procedure TArterialTree.AddLeak(Node: Integer; const AName: string; AFraction: Double;
