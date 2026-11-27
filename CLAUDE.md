@@ -38,12 +38,13 @@ in newVM's `CLAUDE.md`.
 | `FEM4/Examples/Aorta/` | 1-D finite-element pulse waves from the aortic valve to the femorals and the left wrist, with the AortaView viewer; reads LeftVentricle's `out/beat.csv` |
 | `FEM4/Examples/circ_sim/` | LeftVentricle and Aorta in one window, on two tabs, with one Compute; uses both projects' units and `../LeftVentricle/lvrun` |
 | `FEM4/Examples/Asthma/` | Lung mechanics in normal people and asthma: finite-element bronchiole wall (tube law) and alveolus, then a Weibel-tree lung with chest wall giving spirometry, pleural pressure, EELV and work of breathing, uniform or patchy |
+| `FEM4/Examples/AsthmaVent/` | A live ventilator simulator (VC/PC-CMV, VC/PC-SIMV + PS, CPAP + PS) on Asthma's patchy lung, with pressure, flow, volume and pleural pressure charts; uses `../Asthma`'s units and law cache |
 | `FEM4/Examples/Data/` | ThermEx1's gmsh inputs (`thermex1.geo/.msh/.scr`); ThermEx1 and ThermSlab find it as `../Data/` |
 
 Cross-project dependencies inside this repo: JetFlow and HFJV use
 `demos/JetVent`; Defibrillation uses `FEM4/Examples/ThermEx1` and
 `Anaesthetics/PK-PD_FPC`; HFJV uses Defibrillation, ThermEx1, JetVent and
-PK-PD_FPC; Aorta reads `../LeftVentricle/out/beat.csv` (not in git: run
+PK-PD_FPC; AsthmaVent uses `FEM4/Examples/Asthma`'s units and its `cache/`; Aorta reads `../LeftVentricle/out/beat.csv` (not in git: run
 `lvrun --csv=out/beat.csv` there first). Move none of these without fixing the others' search paths.
 
 ## Build
@@ -1966,7 +1967,10 @@ gases in `absorbrun` after every breath (columns `PaO2_mmHg`,
 `spontrun.lpr` (its header has the protocol and every assumption),
 `plot_spont.py` (`out/spont.png`), `out/spont.csv`, which joins each
 run's `out/spont_<run>_sum.csv`. There is also a row per breath in
-`out/spont_<run>.csv`.
+`out/spont_<run>.csv`, and (since stage 10) every step of the last
+breath in `out/spont_<run>_trace.csv`: pleural pressure, airway pressure,
+volume, muscle pressure and the alveolar pressure in each quarter of the
+lung's height. The trace doesn't change the results.
 
 - **The patient**: the emergency department before intubation. It has
   stage 8's lung (tone 0.8, wall x 3, closure hysteresis) with the
@@ -2008,8 +2012,8 @@ run's `out/spont_<run>_sum.csv`. There is also a row per breath in
   the drive holds 12.5 L/min.
 - **What it shows**:
   - **The asthmatic does 6 times the normal work** for the same
-    ventilation. The pleural swing is 23.5 cmH2O against 2.9 normal,
-    which is in the range where pulsus paradoxus exceeds 10-15 mmHg.
+    ventilation. The pleural swing is 23.5 cmH2O against 2.9 normal.
+    Stage 10 computes the pulsus this causes: 8.5 mmHg.
     It also carries 4.7 cmH2O of intrinsic PEEP that must be overcome
     before any gas moves, and it breathes 460 mL above FRC.
   - **The hypoxaemia is shunt, with normal or low PaCO2**: 60 units
@@ -2037,11 +2041,197 @@ run's `out/spont_<run>_sum.csv`. There is also a row per breath in
     hypoxaemia and anxiety, and TTI with it.
   - Expiratory muscles are not modelled.
   - The Pimax-volume line and the salbutamol tone are assumed.
-  - There is no circulation, so the pulsus is inferred from the swing,
-    not computed.
+  - The circulation is stage 10's, driven one way by these traces.
 - Options: `--only`, `--salb` (0.6), `--pmax` (50), `--breaths` (60),
   `--dt`, `--out`. About a minute a case. The nine cases were run in
   parallel with `--only`.
+
+#### Stage 10: the circulation and pulsus paradoxus (2026-11-26)
+
+`uCirculation.pas` (its header has the equations and sources),
+`circcheck.lpr` (all passing), `pulsusrun.lpr` (its header has the
+protocol and the mechanisms), `plot_pulsus.py` (`out/pulsus.png`) and
+`out/pulsus.csv`, which joins the runs' rows. The full model's beats are
+in `out/pulsus_<run>_beats.csv` and its last two breaths, every 5 ms, in
+`out/pulsus_<run>_wave.csv`. Build the programs like the others. Run
+`spontrun` first, because `pulsusrun` reads its traces.
+
+- **The circulation is lumped, not finite elements.** It uses the minimal
+  model of Smith, Chase et al. (Med Eng Phys 2004): two ventricles and a
+  septum, each a time-varying elastance, with the septum's position
+  solved at every evaluation. A pericardium encloses them. So a fuller
+  RV stiffens LV filling, which is direct interdependence. The heart and
+  valves use Smith's parameters. Why not the LeftVentricle FE model: it
+  has no right ventricle, and it takes minutes a beat against
+  milliseconds here.
+- **Thoracic layout** (my split of Smith's compartments): the thoracic
+  aorta (0.6 of the 1.45 mL/mmHg arterial compliance), the vena cava with
+  the RA, the pulmonary arteries and veins (with the LA) and the
+  pericardium all sit at pleural pressure. The systemic arteries (where
+  the cuff is) and the systemic veins sit at atmospheric pressure.
+  - Venous return through the thoracic inlet is a Starling resistor:
+    the veins collapse once the pressure inside falls below
+    atmospheric.
+  - Pulmonary flow runs through four horizontal bands of West zones,
+    squeezed by each band's alveolar pressure from the trace. The lung
+    is upright, with a hydrostatic offset about the heart at
+    mid-height.
+  - The coupling is one way: the lung doesn't feel the circulation.
+- **Calibration**: Smith's pulmonary-venous compliance (137 mL/mmHg)
+  left the LA at ~0 mmHg, so it is 20, with 1800 mL stressed volume,
+  `R_vr` 0.04 and `R_sys` 0.95 (assumed). At rest (75 /min, Ppl -4) that
+  gives 115/75 mmHg, PA 29/9, CVP 3.8, LVEDV 120, EF 0.61, CO 5.5 L/min.
+- **Bugs hit**:
+  - The first septum solve, Newton inside a bracket, crept along one
+    side and ran out of iterations, so the septum jumped by ±30 mL
+    between steps. It is now safeguarded Newton with an analytic
+    derivative (residual 7e-11 mmHg).
+  - In `TTrace.At` a local `tb` hid the field `TB` (case-insensitive),
+    which hung the run.
+  - At HR 110 against 25 breaths/min the beats fall on only 22 phases
+    of the breath, so the default HR is 107, which shares no factor
+    with 25.
+- **Results** (HR 107, the last 40 of 50 breaths; mmHg; bedside pulsus
+  is the highest less the lowest systolic pressure within a breath,
+  averaged; the envelope is the same from the beats' mean by phase):
+
+  | case | pleural swing | pulsus, bedside | envelope | PPV | CO L/min | MAP | CVP | veins collapsed |
+  |---|---|---|---|---|---|---|---|---|
+  | normal | 2.4 | 0.8 | 1.1 | 1.9 % | 6.24 | 106 | 3.2 | 0 |
+  | asthma | 18.1 | 6.9 | 8.5 | 13.2 % | 6.17 | 105 | 0.9 | 34 % |
+  | salbutamol | 8.7 | 3.2 | 4.0 | 5.8 % | 6.33 | 108 | 2.6 | 25 % |
+  | heliox | 15.7 | 6.0 | 7.5 | 11.3 % | 6.20 | 106 | 1.4 | 33 % |
+  | CPAP 5 | 15.2 | 5.7 | 7.3 | 11.3 % | 5.91 | 101 | 2.2 | 31 % |
+  | CPAP 10 | 13.2 | 4.8 | 6.2 | 10.1 % | 5.53 | 96 | 3.4 | 27 % |
+  | salbutamol + heliox | 7.3 | 2.6 | 3.3 | 4.8 % | 6.33 | 108 | 2.8 | 20 % |
+  | salbutamol + CPAP 5 | 7.9 | 2.8 | 3.5 | 5.6 % | 5.92 | 101 | 3.6 | 14 % |
+
+  Mechanisms in the asthmatic (envelope pulsus 8.5, each switched off):
+
+  | change | pulsus |
+  |---|---|
+  | rigid septum, no pericardium | 8.6 |
+  | no alveolar squeeze (plain pulmonary resistance) | 8.8 |
+  | systemic veins follow the swing (no inspiratory venous surge) | 10.9 |
+  | -300 / +300 mL stressed volume | 8.5 / 8.5 |
+  | thoracic aorta 0.6 of arterial compliance (not 0.41) | 10.5 |
+  | Ppl and Palv held at their means (the measurement floor) | 0.0 |
+- **What it shows**:
+  - **Pulsus is proportional to the pleural swing**: the envelope is
+    0.44-0.48 times it in every case, so treatments lower pulsus exactly
+    as far as they lower the swing. Salbutamol halves it; CPAP 10 cuts it
+    by a quarter.
+  - **The proportion is close to the thoracic aorta's share of
+    arterial compliance (0.41).** The swing reaches the cuff through the arteries inside
+    the chest. A 15 mmHg sinusoidal swing alone gives 6.3 mmHg
+    (circcheck). Raising the share to 0.6 raises the asthmatic's pulsus
+    from 8.5 to 10.5. That share is assumed, so the absolute pulsus is
+    only as good as it.
+  - **Ventricular interdependence adds nothing here**, although the
+    septum does work: an RV of 80 to 160 mL raises LV diastolic pressure
+    from 3.6 to 9.4 mmHg in circcheck. Two reasons. Smith's pericardium
+    is slack at these volumes. And inspiration can't fill the RV much,
+    because the great veins collapse at the thoracic inlet for a third
+    of the breath (mean CVP 0.9 mmHg).
+  - **The inspiratory venous surge partly offsets pulsus.** Removing it
+    raises pulsus from 8.5 to 10.9. The venous collapse also costs output:
+    held at their means, the same pressures give CO 6.73 and MAP 113
+    against 6.17 and 105 when breathing.
+  - **CPAP lowers output** (CO 5.5 at CPAP 10 against 6.2): the higher
+    mean pleural pressure impedes venous return.
+  - **Volume doesn't change pulsus** (±300 mL: 8.5 either way). Pulse
+    pressure variation does, 16 % dry against 11.5 % wet, the familiar
+    preload dependence.
+  - **Against the bedside**: the asthmatic's 24.6 cmH2O swing gives
+    8.5 mmHg, under the classical 10 mmHg threshold for severe asthma.
+    The model probably underestimates it, for the reasons below.
+- **Limits**:
+  - The thoracic share of arterial compliance and the venous split
+    are assumed.
+  - There is no abdomen. In reality, descent of the diaphragm raises
+    abdominal pressure and pushes IVC blood into the chest during
+    inspiration, so here the venous inflow collapses too easily.
+  - Expiration is passive, so there is none of the positive expiratory
+    pleural pressure that adds an expiratory rise in systolic pressure.
+  - Heart rate is fixed and there are no baroreflexes.
+  - The coupling is one way.
+  - Smith's pericardium and septum were fitted for a different purpose.
+- Options (`pulsusrun`): `--only=<run>`, `--hr` (107), `--breaths` (40
+  measured, after 10), `--dt` (0.5 ms), `--out`. About 10 s a case;
+  the eight cases were run in parallel with `--only` and joined.
+
+### `FEM4/Examples/AsthmaVent`
+
+Added 2026-11-27 at the user's request: "an app to simulate mechanical
+ventilation of the asthmatic patient", with SIMV-PS and PC-SIMV-PS,
+variable PEEP, pressure, tidal volume and I:E, and charts of pressure,
+flow, lung volume and pleural pressure. It is a Lazarus GUI on the
+Asthma stages' model, not a new model. `uVentSim.pas`'s header has the
+ventilator logic, `uAsthmaVentForm.pas`'s the window.
+
+- **Build**: `lazbuild --lazarusdir=<path> --ws=gtk2 asthmavent.lpi`
+  (OtherUnitFiles `../Asthma`, newVM, newVM/Graphs; `-O3`). Checks:
+  `fpc -O3 -FUlib -Fu../Asthma -Fu../../../newVM -Fi../../../newVM
+  ventsimcheck.lpr` (8 cases, about 4 minutes). The tube-law cache is
+  `../Asthma/cache`, found from the executable's folder. Every tone
+  level 0-0.9 (step 0.05) at wall x 1 and x 3 is now in it.
+- **The patient**: stage 5-9's patchy lung (256 units, gravity, closure
+  hysteresis, tone that ignores stretch) behind an 8 mm tube (K1 1, K2
+  4). Presets: normal; status asthmaticus (tone 0.8, wall x 3, 10 %
+  spread); after salbutamol (0.6); near-fatal (0.9). Heliox as stage 8.
+  The muscles are spontrun's half-sine at the patient's own rate, with
+  8 % jitter of the period; effort 0 is paralysed.
+- **Posture** (2026-11-27, after the user found the pleural trace wrong:
+  it stayed negative through ventilator breaths). Upright was the Asthma
+  stages' chest wall (relaxed 4.1 L, 0.2 L/cmH2O), so a passive 500 mL
+  breath took mid-height pleural pressure only from -3 to -0.6 cmH2O at
+  PEEP 5. The default is now **supine, ventilated** (`Supine` in
+  `TPatientSettings`, a Patient check box, `--upright` to turn it off):
+  - the abdomen's load: chest wall and abdomen relaxed at 2.6 L with
+    half the compliance, 0.1 L/cmH2O;
+  - the gravity gradient over an 18 cm front-to-back depth.
+  These are assumed round values. FRC is then 2.33 L against 3.00
+  upright. Status asthmaticus, paralysed, 500 mL at PEEP 5: pleural
+  pressure 2.6-3.0 to 7.6-8.0 cmH2O, 150-200 units shut (upright about
+  110-170). Changing posture mid-run re-references the volume trace to
+  the new relaxed FRC. `ventsimcheck` case 8.
+- **Modes**: VC-CMV and PC-CMV (assist-control), VC-SIMV + PS and
+  PC-SIMV + PS, CPAP + PS (20 s apnoea backup, a PC breath). Ti =
+  60/rate x 1/(1+E) for I:E 1:E, so VC flow is VT/Ti (square): at
+  SIMV 12 and 1:2 that's only 18 L/min, and peaks are far below stage
+  5's 60 L/min ones. SIMV trigger window: the last half of each
+  mandatory period, at most 5 s. Flow trigger from 0.2 s into
+  expiration; PS cycles off at a % of peak flow or after 3 s; VC cut
+  short above the pressure limit. Settings take effect at the next
+  breath; PEEP, triggers and the limit at once.
+- **Holds**: inspiratory (0.5 s, Pplat) after the next mandatory breath;
+  expiratory (2 s, total PEEP) in place of the next time-triggered one.
+- **Missed triggers**: an effort is missed if part of it falls in
+  expiration (0.2 s on) and nothing triggers by 3 tau after its Ti.
+  They're marked on the pleural chart.
+- **Speed**: about 2.4 x real time overall on the P620 (VC inspiration,
+  `SolveFlow`, runs at about real time; pressure-held phases 6 x). The
+  thread runs up to 0.25 s ahead of the wall clock; if it can't keep up
+  the display just runs slower. A new lung takes about 2 s (the tables),
+  and built lungs are kept, so switching back is instant. The state
+  (unit volumes, shut flags, time) carries over.
+- **Display**: `TVMPlot2D` has no fixed axis range, so each chart has a
+  hidden series (`plsNone`, no name) holding its Y range, rounded
+  outwards from the data and a minimum range. Legends were dropped for
+  the titles: they covered the traces in every corner.
+- **Seen in runs** (60 s, upright, before the posture option):
+  status asthmaticus on VC-SIMV 12 + PS 10,
+  PEEP 0, effort 10 at 22 /min: 110 units shut, EELV about 300 mL above
+  FRC, Ppl -12 to -2.5 cmH2O, one missed effort a minute. On PC-SIMV 12
+  (Pinsp 20, PEEP 5, effort 8 at 20 /min): 4 missed a minute, VEI about
+  1.3 L. Salbutamol + heliox mid-run opens every unit.
+- `--snapshot=<prefix> --time=<s>` runs at full speed, saves the four
+  charts as PNG and the window as BMP, prints the monitor and exits;
+  `--mode`, `--patient`, `--effort`, `--patrate`, `--peep`, `--rate`,
+  `--vt`, `--pinsp`, `--ps`, `--ie` set the start.
+- The form is built in code: `TVentForm.Create` is overridden to call
+  `CreateNew`, so `Application.CreateForm` works with no `.lfm`
+  (`Application.MainForm` can't be assigned).
 
 ## demos/
 

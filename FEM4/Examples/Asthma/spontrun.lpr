@@ -45,8 +45,13 @@ program spontrun;
   viscosity x 1.09, in the lung and upper airway); CPAP 5 and 10 cmH2O;
   salbutamol + heliox; salbutamol + CPAP 5. Normal lung for reference.
   Options: --only=<run>, --salb, --pmax, --breaths, --dt (0.004),
-  --out (out). Writes <out>/spont_<run>.csv (one row per breath) and
-  <out>/spont_<run>_sum.csv (the summary row).
+  --out (out). Writes <out>/spont_<run>.csv (one row per breath),
+  <out>/spont_<run>_sum.csv (the summary row) and
+  <out>/spont_<run>_trace.csv: every step of the last breath - pleural
+  pressure at mid-height, airway pressure, lung volume above FRC, muscle
+  pressure, and the volume-weighted alveolar pressure of the units in
+  each quarter of the lung's height (shut units included: their trapped
+  gas squeezes the vessels too). Stage 10's pulsusrun reads it.
 
   Build:  fpc -O3 -FUlib -Fu../../../newVM -Fi../../../newVM spontrun.lpr }
 
@@ -144,8 +149,10 @@ var
   capped: Boolean;
   BG: TBloodGases;
   GP: TGasParams;
-  F, S: TStringList;
+  F, S, Tr: TStringList;
   t1: QWord;
+  band: Integer;
+  pb, vb: array[0..3] of Double;
 begin
   t1 := GetTickCount64;
   Prm := DefaultLungParams;
@@ -193,6 +200,9 @@ begin
   F.Add('breath,t_s,VT_mL,Pmus_peak_cmH2O,work_J_per_min,EELV_above_FRC_mL,PEEPi_cmH2O,Ppl_swing_cmH2O,TTI,units_shut_all_breath');
   sVT := 0; sPm := 0; sWk := 0; sEE := 0; sPi := 0; sSw := 0; sTTI := 0; nShut := 0;
   capped := False;
+  Tr := TStringList.Create;
+  Tr.Add(Format('# height_cm=%.1f bands=4 frc_L=%.4f', [PP.Height, frc]));
+  Tr.Add('t_s,Ppl_cmH2O,Paw_cmH2O,V_above_FRC_mL,Pmus_cmH2O,Palv0_cmH2O,Palv1_cmH2O,Palv2_cmH2O,Palv3_cmH2O');
   for b := 1 to NBreaths do
   begin
     vlung := Sim.VTot; vt := 0; wk := 0;
@@ -205,6 +215,17 @@ begin
       if Sim.VTot > x then wk := wk + Sim.Pmus * (Sim.VTot - x);
       vt := Max(vt, Sim.VTot - vlung);
       pplMin := Min(pplMin, Sim.Ppl);
+      if b = NBreaths then
+      begin
+        for band := 0 to 3 do begin pb[band] := 0; vb[band] := 0; end;
+        for u := 0 to NU - 1 do
+        begin
+          band := Min(3, Trunc(4 * L.PY[u] / PP.Height));
+          pb[band] := pb[band] + L.Pu[u] * Sim.V[u]; vb[band] := vb[band] + Sim.V[u];
+        end;
+        Tr.Add(Format('%.4f,%.4f,%.4f,%.2f,%.4f,%.4f,%.4f,%.4f,%.4f', [st * Sim.Dt, Cm(Sim.Ppl), Cm(Sim.Paw),
+          1000 * (Sim.VTot - frc), Sim.Pmus, Cm(pb[0] / vb[0]), Cm(pb[1] / vb[1]), Cm(pb[2] / vb[2]), Cm(pb[3] / vb[3])]));
+      end;
       for u := 0 to NU - 1 do
       begin
         if not L.Shut[u] then OpenB[u] := True;
@@ -279,7 +300,8 @@ begin
     100 * qShunt, BG.PaO2, BG.PaCO2, BG.SaO2]));
   S.SaveToFile(Format('%s/spont_%s_sum.csv', [OutDir, C.Name]));
   F.SaveToFile(Format('%s/spont_%s.csv', [OutDir, C.Name]));
-  S.Free; F.Free;
+  Tr.SaveToFile(Format('%s/spont_%s_trace.csv', [OutDir, C.Name]));
+  S.Free; F.Free; Tr.Free;
   Sim.Free; Mus.Free; L.Free;
 end;
 
